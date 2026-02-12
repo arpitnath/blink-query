@@ -1,0 +1,44 @@
+{
+  "name": "blink-query",
+  "version": "1.0.0",
+  "description": "DNS-inspired knowledge resolution layer for AI agents",
+  "type": "module",
+  "main": "dist/blink.js",
+  "types": "dist/blink.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/blink.js",
+      "types": "./dist/blink.d.ts"
+    },
+    "./cli": "./dist/index.js"
+  },
+  "bin": {
+    "blink": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "build:parser": "peggy --format es -o src/grammar/query-parser.js src/grammar/query.peggy",
+    "build": "npm run build:parser && tsup",
+    "dev": "npm run build && node dist/index.js",
+    "test": "npm run build:parser && vitest run",
+    "clean": "rm -rf dist/ src/grammar/query-parser.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^12.6.2",
+    "commander": "^14.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "peggy": "^4.2.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

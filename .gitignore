@@ -1,0 +1,20 @@
+# Claude Capsule Kit (generated at runtime)
+.claude/**
+CLAUDE.md
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Generated parser
+src/grammar/query-parser.js
+src/grammar/query-parser.d.ts
+
+# Blink data
+*.db
+.blink/
+
+# OS
+.DS_Store

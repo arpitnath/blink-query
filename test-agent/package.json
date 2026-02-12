@@ -1,0 +1,21 @@
+{
+  "name": "blink-test-agent",
+  "version": "1.0.0",
+  "description": "Test agent that validates Blink via Library API and MCP",
+  "type": "module",
+  "scripts": {
+    "test:library": "npx tsx library-test.ts",
+    "test:mcp": "npx tsx mcp-test.ts",
+    "test": "npx tsx library-test.ts && npx tsx mcp-test.ts"
+  },
+  "dependencies": {
+    "blink-query": "file:..",
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  }
+}

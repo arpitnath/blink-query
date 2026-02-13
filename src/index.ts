@@ -211,6 +211,54 @@ program
     }
   });
 
+// --- ingest ---
+program
+  .command('ingest <directory>')
+  .description('Ingest files from a directory into Blink records')
+  .option('--ns <namespace>', 'Target namespace (default: derived from file paths)')
+  .option('--prefix <prefix>', 'Namespace prefix to prepend', 'ingested')
+  .option('--summary-length <chars>', 'Max summary length for extractive summarizer', parseInt, 500)
+  .option('--ttl <seconds>', 'TTL for ingested records', parseInt)
+  .option('--tags <tags>', 'Additional comma-separated tags')
+  .option('--recursive', 'Recursively scan subdirectories (default: true)', true)
+  .option('--no-recursive', 'Do not scan subdirectories')
+  .action(async (directory: string, opts) => {
+    const { loadDirectory, extractiveSummarize } = await import('./ingest.js');
+    const { resolve: resolvePath } = await import('path');
+
+    const absDir = resolvePath(directory);
+    console.log(`Ingesting files from: ${absDir}`);
+
+    const docs = await loadDirectory(absDir, { recursive: opts.recursive });
+    console.log(`Found ${docs.length} documents`);
+
+    if (docs.length === 0) {
+      console.log('No supported files found.');
+      return;
+    }
+
+    const result = await blink.ingest(docs, {
+      summarize: extractiveSummarize(opts.summaryLength),
+      namespace: opts.ns || undefined,
+      namespacePrefix: opts.ns ? undefined : opts.prefix,
+      ttl: opts.ttl,
+      tags: opts.tags ? opts.tags.split(',').map((t: string) => t.trim()) : undefined,
+    });
+
+    console.log(`\nIngested ${result.records.length} records in ${result.elapsed}ms`);
+    if (result.errors.length > 0) {
+      console.log(`Errors: ${result.errors.length}`);
+      for (const e of result.errors) {
+        const fp = (e.document.metadata.file_path as string) || e.document.id;
+        console.log(`  - ${fp}: ${e.error.message}`);
+      }
+    }
+
+    for (const r of result.records) {
+      console.log(`  [${r.type}] ${r.path}`);
+    }
+  });
+
 // --- serve (MCP) ---
 program
   .command('serve')

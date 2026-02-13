@@ -1,0 +1,18 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "taskflow_dev",
+    "pool": { "min": 2, "max": 10 }
+  },
+  "server": {
+    "port": 3000,
+    "cors": true,
+    "rateLimit": { "windowMs": 60000, "max": 100 }
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "file": "logs/app.log"
+  }
+}

@@ -9,7 +9,7 @@ export default defineConfig([
     clean: true,
     splitting: false,
     dts: true,
-    external: ['better-sqlite3'],
+    external: ['better-sqlite3', 'llamaindex', '@llamaindex/readers'],
   },
   // CLI entry point
   {
@@ -18,7 +18,7 @@ export default defineConfig([
     target: 'es2020',
     clean: false,
     splitting: false,
-    external: ['better-sqlite3'],
+    external: ['better-sqlite3', 'llamaindex', '@llamaindex/readers'],
     banner: {
       js: '#!/usr/bin/env node',
     },

@@ -70,3 +70,50 @@ export interface SaveInput {
   ttl?: number;
   sources?: Source[];
 }
+
+// ─── Ingestion types ────────────────────────────────────────
+
+/** Generic document interface for ingestion. Compatible with LlamaIndex Document but doesn't import it. */
+export interface IngestDocument {
+  id: string;
+  text: string;
+  metadata: Record<string, unknown>;
+}
+
+/** Callback to produce a summary from document text. Developers bring their own LLM or use extractive logic. */
+export type SummarizeCallback = (
+  text: string,
+  metadata: Record<string, unknown>,
+) => string | Promise<string>;
+
+/** Optional callback to classify a document into a RecordType. Defaults to SOURCE if not provided. */
+export type ClassifyCallback = (
+  text: string,
+  metadata: Record<string, unknown>,
+) => RecordType | Promise<RecordType>;
+
+/** Options for blink.ingest() */
+export interface IngestOptions {
+  /** Required: produces a summary string from document text */
+  summarize: SummarizeCallback;
+  /** Optional: classifies document into a RecordType (default: SOURCE) */
+  classify?: ClassifyCallback;
+  /** Optional: explicit namespace string or function deriving namespace from metadata */
+  namespace?: string | ((metadata: Record<string, unknown>) => string);
+  /** Optional: namespace prefix to prepend (e.g., "ingested") */
+  namespacePrefix?: string;
+  /** Optional: TTL for all ingested records */
+  ttl?: number;
+  /** Optional: additional tags to apply to all records */
+  tags?: string[];
+  /** Optional: concurrency for async summarize/classify calls (default: 5) */
+  concurrency?: number;
+}
+
+/** Result of an ingest operation */
+export interface IngestResult {
+  records: BlinkRecord[];
+  errors: Array<{ document: IngestDocument; error: Error }>;
+  total: number;
+  elapsed: number;
+}

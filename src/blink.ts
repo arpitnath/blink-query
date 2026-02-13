@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
-import type { BlinkRecord, SaveInput, Zone, ResolveResponse } from './types.js';
+import { processDocuments, loadDirectory, extractiveSummarize } from './ingest.js';
+import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult } from './types.js';
 
 export interface BlinkOptions {
   dbPath?: string;
@@ -66,6 +67,21 @@ export class Blink {
     return getByPath(this.db, path);
   }
 
+  /** Ingest documents (from LlamaIndex or any loader) into Blink records */
+  async ingest(docs: IngestDocument[], options: IngestOptions): Promise<IngestResult> {
+    return processDocuments(this, docs, options);
+  }
+
+  /** Load and ingest a directory in one call. Uses LlamaIndex if installed, else basic fs loader. */
+  async ingestDirectory(
+    dirPath: string,
+    options: IngestOptions,
+    loadOptions?: { recursive?: boolean; extensions?: string[] },
+  ): Promise<IngestResult> {
+    const docs = await loadDirectory(dirPath, loadOptions);
+    return this.ingest(docs, options);
+  }
+
   /** Close the database connection */
   close(): void {
     this.db.close();
@@ -73,4 +89,10 @@ export class Blink {
 }
 
 // Re-export types for consumers
-export type { BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source, QueryAST, QueryCondition } from './types.js';
+export type {
+  BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
+  IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback,
+} from './types.js';
+
+// Re-export ingestion helpers
+export { loadDirectory, extractiveSummarize } from './ingest.js';

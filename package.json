@@ -38,6 +38,18 @@
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
+  "peerDependencies": {
+    "llamaindex": ">=0.12.0",
+    "@llamaindex/readers": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "llamaindex": {
+      "optional": true
+    },
+    "@llamaindex/readers": {
+      "optional": true
+    }
+  },
   "engines": {
     "node": ">=20"
   }

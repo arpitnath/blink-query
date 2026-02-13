@@ -23,8 +23,8 @@
     "build:parser": "peggy --format es -o src/grammar/query-parser.js src/grammar/query.peggy",
     "build": "npm run build:parser && tsup",
     "dev": "npm run build && node dist/index.js",
-    "test": "npm run build:parser && vitest run --testPathIgnorePatterns=integration",
-    "test:integration": "npm run build:parser && vitest run --testPathPattern=integration",
+    "test": "npm run build:parser && vitest run --exclude 'tests/integration/**'",
+    "test:integration": "npm run build:parser && vitest run tests/integration",
     "test:all": "npm run build:parser && vitest run",
     "clean": "rm -rf dist/ src/grammar/query-parser.js"
   },
@@ -44,13 +44,17 @@
   },
   "peerDependencies": {
     "@llamaindex/readers": ">=0.1.0",
-    "llamaindex": ">=0.12.0"
+    "llamaindex": ">=0.12.0",
+    "pg": ">=8.0.0"
   },
   "peerDependenciesMeta": {
     "llamaindex": {
       "optional": true
     },
     "@llamaindex/readers": {
+      "optional": true
+    },
+    "pg": {
       "optional": true
     }
   },

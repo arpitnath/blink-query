@@ -98,6 +98,7 @@ export type {
   BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
   IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback,
   DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
+  LLMConfig,
 } from './types.js';
 
 // Re-export ingestion helpers
@@ -108,3 +109,6 @@ export {
   FILESYSTEM_DERIVERS,
   filesystemNamespace, filesystemTitle, filesystemTags, filesystemSources,
 } from './ingest.js';
+
+// Re-export LLM helpers
+export { llmSummarize, llmClassify } from './llm.js';

@@ -127,16 +127,40 @@ export class Blink {
       resolvedConfig.idColumn = introspection.primaryKey || introspection.columns[0].name;
     }
 
-    // Load all documents progressively
-    const docs = await loadFromPostgresProgressive(resolvedConfig);
-
     // Auto-apply POSTGRES_DERIVERS + extractiveSummarize when no options provided
     const effectiveOptions: IngestOptions = options
       ? { ...options }
       : { ...POSTGRES_DERIVERS, summarize: extractiveSummarize(500) };
 
-    // Ingest into Blink
-    const result = await this.ingest(docs, effectiveOptions);
+    // Ingest each batch as it arrives instead of accumulating all docs in memory
+    const allRecords: BlinkRecord[] = [];
+    const allErrors: Array<{ document: IngestDocument; error: Error }> = [];
+    let totalDocs = 0;
+    const start = Date.now();
+
+    const originalOnBatch = resolvedConfig.onBatch;
+    resolvedConfig.onBatch = async (batchDocs, batchIndex, totalLoaded) => {
+      // Ingest this batch immediately
+      const batchResult = await this.ingest(batchDocs, effectiveOptions);
+      allRecords.push(...batchResult.records);
+      allErrors.push(...batchResult.errors);
+      totalDocs += batchDocs.length;
+
+      // Call original onBatch if provided
+      if (originalOnBatch) {
+        await originalOnBatch(batchDocs, batchIndex, totalLoaded);
+      }
+    };
+
+    // Load progressively — onBatch fires for each batch and ingests per-batch
+    await loadFromPostgresProgressive(resolvedConfig);
+
+    const result: IngestResult = {
+      records: allRecords,
+      errors: allErrors,
+      total: totalDocs,
+      elapsed: Date.now() - start,
+    };
 
     return { ...result, introspection };
   }

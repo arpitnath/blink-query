@@ -110,7 +110,7 @@ describe('llmSummarize', () => {
     expect(options.headers['Authorization']).toBe('Bearer test-key');
 
     const body = JSON.parse(options.body);
-    expect(body.model).toBe('gpt-4o-mini');
+    expect(body.model).toBe('gpt-5-mini-2025-08-07');
     expect(body.temperature).toBe(0.3);
     expect(body.messages).toHaveLength(2);
     expect(body.messages[0].role).toBe('system');

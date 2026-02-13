@@ -4,7 +4,7 @@ import { extractiveSummarize } from './ingest.js';
 // ─── Defaults ────────────────────────────────────────────────
 
 const DEFAULT_PROVIDER = 'openai' as const;
-const DEFAULT_MODEL = 'gpt-4o-mini';
+const DEFAULT_MODEL = 'gpt-5-mini-2025-08-07';
 const DEFAULT_MAX_INPUT_CHARS = 8000;
 const DEFAULT_TEMPERATURE = 0.3;
 
@@ -88,7 +88,7 @@ async function openaiChat(
  * Configuration is resolved from the provided config object,
  * then from environment variables, then from defaults:
  * - `BLINK_LLM_PROVIDER` (default: 'openai')
- * - `BLINK_LLM_MODEL`    (default: 'gpt-4o-mini')
+ * - `BLINK_LLM_MODEL`    (default: 'gpt-5-mini-2025-08-07')
  * - `OPENAI_API_KEY`      (required when provider is openai)
  */
 export function llmSummarize(config?: LLMConfig): SummarizeCallback {

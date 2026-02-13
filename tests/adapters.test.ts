@@ -75,14 +75,14 @@ describe('parseUrl', () => {
 // ─── loadFromPostgres ────────────────────────────────────────
 
 describe('loadFromPostgres', () => {
-  it('throws a clear error when pg is not installed', async () => {
+  it('rejects with connection error for invalid host', async () => {
     const config: PostgresLoadConfig = {
-      connectionString: 'postgresql://localhost:5432/testdb',
+      connectionString: 'postgresql://localhost:59999/nonexistent_db',
       query: 'SELECT * FROM docs',
       textColumn: 'content',
     };
 
-    await expect(loadFromPostgres(config)).rejects.toThrow('pg package required: npm install pg');
+    await expect(loadFromPostgres(config)).rejects.toThrow();
   });
 });
 

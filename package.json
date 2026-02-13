@@ -23,7 +23,9 @@
     "build:parser": "peggy --format es -o src/grammar/query-parser.js src/grammar/query.peggy",
     "build": "npm run build:parser && tsup",
     "dev": "npm run build && node dist/index.js",
-    "test": "npm run build:parser && vitest run",
+    "test": "npm run build:parser && vitest run --testPathIgnorePatterns=integration",
+    "test:integration": "npm run build:parser && vitest run --testPathPattern=integration",
+    "test:all": "npm run build:parser && vitest run",
     "clean": "rm -rf dist/ src/grammar/query-parser.js"
   },
   "dependencies": {
@@ -33,14 +35,16 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/pg": "^8.16.0",
     "peggy": "^4.2.0",
+    "pg": "^8.18.0",
     "tsup": "^8.5.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
   "peerDependencies": {
-    "llamaindex": ">=0.12.0",
-    "@llamaindex/readers": ">=0.1.0"
+    "@llamaindex/readers": ">=0.1.0",
+    "llamaindex": ">=0.12.0"
   },
   "peerDependenciesMeta": {
     "llamaindex": {

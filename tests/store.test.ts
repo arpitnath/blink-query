@@ -9,7 +9,6 @@ import {
   move,
   listZones,
   searchByKeywords,
-  extractKeywords,
   slug,
 } from '../src/store.js';
 
@@ -174,27 +173,23 @@ describe('slug', () => {
   });
 });
 
-describe('extractKeywords', () => {
-  it('extracts from title and tags', () => {
-    const kw = extractKeywords({ title: 'Redis Caching Pattern', tags: ['database'], summary: null });
-    expect(kw).toContain('redis');
-    expect(kw).toContain('caching');
-    expect(kw).toContain('pattern');
-    expect(kw).toContain('database');
+describe('FTS5 features', () => {
+  it('supports porter stemming', () => {
+    save(db, { namespace: 'test', title: 'Running tests', summary: 'test runner' });
+    // Search for "run" should find "running" and "runner" via porter stemming
+    const results = searchByKeywords(db, ['run']);
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('Running tests');
   });
 
-  it('filters stop words', () => {
-    const kw = extractKeywords({ title: 'The Quick Brown Fox', tags: [], summary: 'is a very fast animal' });
-    expect(kw).not.toContain('the');
-    expect(kw).not.toContain('is');
-    expect(kw).not.toContain('very');
-    expect(kw).toContain('quick');
-    expect(kw).toContain('fast');
+  it('handles empty keyword array', () => {
+    const results = searchByKeywords(db, []);
+    expect(results).toEqual([]);
   });
 
-  it('deduplicates', () => {
-    const kw = extractKeywords({ title: 'Redis Redis', tags: ['redis'], summary: 'redis store' });
-    const redisCount = kw.filter(w => w === 'redis').length;
-    expect(redisCount).toBe(1);
+  it('handles unicode text', () => {
+    save(db, { namespace: 'test', title: 'Café résumé', summary: 'unicode test' });
+    const results = searchByKeywords(db, ['café']);
+    expect(results).toHaveLength(1);
   });
 });

@@ -44,27 +44,15 @@ CREATE TABLE IF NOT EXISTS zones (
     last_modified TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS keywords (
-    keyword      TEXT NOT NULL,
-    record_path  TEXT NOT NULL,
-    PRIMARY KEY (keyword, record_path),
-    FOREIGN KEY (record_path) REFERENCES records(path) ON DELETE CASCADE
+CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
+    record_path UNINDEXED,
+    title,
+    tags,
+    summary,
+    tokenize='porter unicode61'
 );
-
-CREATE INDEX IF NOT EXISTS idx_keywords_keyword ON keywords(keyword);
 `;
 
-// Stop words to filter from keyword extraction
-const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-  'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for',
-  'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
-  'before', 'after', 'above', 'below', 'between', 'and', 'but', 'or',
-  'not', 'no', 'nor', 'so', 'yet', 'both', 'each', 'few', 'more',
-  'most', 'other', 'some', 'such', 'than', 'too', 'very', 'just',
-  'about', 'up', 'out', 'if', 'then', 'that', 'this', 'it', 'its',
-]);
 
 export function slug(text: string): string {
   const result = text
@@ -99,24 +87,6 @@ function shortId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 8);
 }
 
-export function extractKeywords(record: { title: string; tags: string[]; summary: string | null }): string[] {
-  const words: string[] = [];
-
-  // From title
-  words.push(...record.title.toLowerCase().split(/\W+/).filter(Boolean));
-
-  // From tags
-  words.push(...record.tags.map(t => t.toLowerCase().trim()).filter(Boolean));
-
-  // From summary (top terms)
-  if (record.summary) {
-    words.push(...record.summary.toLowerCase().split(/\W+/).filter(Boolean));
-  }
-
-  // Deduplicate, filter stop words + short words
-  const unique = [...new Set(words)].filter(w => w.length > 2 && !STOP_WORDS.has(w));
-  return unique;
-}
 
 function getZonePath(namespace: string): string {
   // Top-level namespace: "me/background" -> "me"
@@ -143,7 +113,31 @@ export function initDB(dbPath?: string): Database {
   const db = new Database(path);
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
+  migrateFTS(db);
   return db;
+}
+
+export function migrateFTS(db: Database): void {
+  // Check if old keywords table exists
+  const hasKeywords = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='keywords'").get();
+  if (hasKeywords) {
+    // Drop old keywords table and index
+    db.exec('DROP TABLE IF EXISTS keywords');
+  }
+
+  // Rebuild FTS from records table
+  const records = db.prepare('SELECT path, title, tags, summary FROM records').all() as any[];
+  const insertFTS = db.prepare('INSERT INTO records_fts (record_path, title, tags, summary) VALUES (?, ?, ?, ?)');
+
+  const doMigrate = db.transaction(() => {
+    // Clear existing FTS data
+    db.exec('DELETE FROM records_fts');
+    for (const r of records) {
+      const tags = JSON.parse(r.tags || '[]').join(' ');
+      insertFTS.run(r.path, r.title, tags, r.summary || '');
+    }
+  });
+  doMigrate();
 }
 
 // --- Zone operations ---
@@ -171,38 +165,51 @@ export function listZones(db: Database): Zone[] {
   return rows;
 }
 
-// --- Keyword operations ---
+// --- FTS5 operations ---
 
-function indexKeywords(db: Database, recordPath: string, keywords: string[]): void {
-  const stmt = db.prepare('INSERT OR IGNORE INTO keywords (keyword, record_path) VALUES (?, ?)');
-  for (const keyword of keywords) {
-    stmt.run(keyword, recordPath);
-  }
+function indexFTS(db: Database, recordPath: string, title: string, tags: string[], summary: string | null): void {
+  // Remove existing entry first (for upserts)
+  db.prepare('DELETE FROM records_fts WHERE record_path = ?').run(recordPath);
+  db.prepare('INSERT INTO records_fts (record_path, title, tags, summary) VALUES (?, ?, ?, ?)')
+    .run(recordPath, title, tags.join(' '), summary || '');
 }
 
-function removeKeywords(db: Database, recordPath: string): void {
-  db.prepare('DELETE FROM keywords WHERE record_path = ?').run(recordPath);
+function removeFTS(db: Database, recordPath: string): void {
+  db.prepare('DELETE FROM records_fts WHERE record_path = ?').run(recordPath);
 }
 
 export function searchByKeywords(db: Database, keywords: string[], namespace?: string, limit = 10): BlinkRecord[] {
-  const placeholders = keywords.map(() => '?').join(', ');
+  if (keywords.length === 0) return [];
+
+  // Cap keywords
+  const kws = keywords.slice(0, 50);
+
+  // Build FTS5 MATCH query: "word1 OR word2 OR word3"
+  // Use OR to match ANY keyword (same behavior as current implementation)
+  const matchExpr = kws.map(k => `"${k.replace(/"/g, '""')}"`).join(' OR ');
+
   let sql = `
-    SELECT r.* FROM records r
-    JOIN keywords k ON k.record_path = r.path
-    WHERE k.keyword IN (${placeholders})
+    SELECT r.*, bm25(records_fts) as rank
+    FROM records_fts fts
+    JOIN records r ON r.path = fts.record_path
+    WHERE records_fts MATCH ?
   `;
-  const params: unknown[] = [...keywords.map(k => k.toLowerCase())];
+  const params: unknown[] = [matchExpr];
 
   if (namespace) {
     sql += ' AND r.namespace LIKE ?';
     params.push(namespace + '%');
   }
 
-  sql += ` GROUP BY r.path ORDER BY COUNT(DISTINCT k.keyword) DESC, r.hit_count DESC LIMIT ?`;
+  sql += ' ORDER BY rank LIMIT ?';
   params.push(limit);
 
-  const rows = db.prepare(sql).all(...params) as RawRecord[];
-  return rows.map(deserializeRecord);
+  const rows = db.prepare(sql).all(...params) as any[];
+  return rows.map(row => {
+    // Remove the rank field before deserializing
+    const { rank, ...recordRow } = row;
+    return deserializeRecord(recordRow);
+  });
 }
 
 // --- Record CRUD ---
@@ -281,10 +288,8 @@ export function save(db: Database, input: SaveInput): BlinkRecord {
         WHERE path = ?
       `).run(input.title, type, summary, content, ttl, timestamp, hash, JSON.stringify(tags), tokens, sources, path);
 
-      // Re-index keywords
-      removeKeywords(db, path);
-      const keywords = extractKeywords({ title: input.title, tags, summary });
-      indexKeywords(db, path, keywords);
+      // Re-index FTS
+      indexFTS(db, path, input.title, tags, summary);
     } else {
       // Insert new
       const id = shortId();
@@ -297,9 +302,8 @@ export function save(db: Database, input: SaveInput): BlinkRecord {
       `).run(id, path, input.namespace, input.title, type, summary, content, ttl,
         timestamp, timestamp, hash, JSON.stringify(tags), tokens, sources);
 
-      // Index keywords
-      const keywords = extractKeywords({ title: input.title, tags, summary });
-      indexKeywords(db, path, keywords);
+      // Index FTS
+      indexFTS(db, path, input.title, tags, summary);
 
       // Update zone count
       incrementZoneCount(db, input.namespace, 1);
@@ -339,7 +343,7 @@ export function deleteRecord(db: Database, path: string): boolean {
   if (!record) return false;
 
   const doDelete = db.transaction(() => {
-    removeKeywords(db, path);
+    removeFTS(db, path);
     db.prepare('DELETE FROM records WHERE path = ?').run(path);
     incrementZoneCount(db, record.namespace, -1);
   });
@@ -359,13 +363,12 @@ export function move(db: Database, fromPath: string, toPath: string): BlinkRecor
   const doMove = db.transaction(() => {
     ensureZone(db, newNamespace);
 
-    // Remove old keywords before path change (FK constraint)
-    removeKeywords(db, fromPath);
+    // Remove old FTS entry before path change
+    removeFTS(db, fromPath);
 
     db.prepare('UPDATE records SET path = ?, namespace = ?, updated_at = ? WHERE path = ?')
       .run(toPath, newNamespace, now(), fromPath);
-    const keywords = extractKeywords({ title: record.title, tags: record.tags, summary: record.summary });
-    indexKeywords(db, toPath, keywords);
+    indexFTS(db, toPath, record.title, record.tags, record.summary);
 
     // Update zone counts
     incrementZoneCount(db, record.namespace, -1);
@@ -414,7 +417,7 @@ export function queryRecords(
       sql += ' AND summary LIKE ?';
       params.push(`%${cond.value}%`);
     } else if (cond.field === 'tag') {
-      sql += ' AND EXISTS (SELECT 1 FROM keywords WHERE keyword = ? AND record_path = records.path)';
+      sql += ' AND EXISTS (SELECT 1 FROM records_fts WHERE records_fts MATCH ? AND record_path = records.path)';
       params.push(String(cond.value).toLowerCase());
     } else if (!ALLOWED_FIELDS.has(cond.field)) {
       throw new Error(`Invalid query field: ${cond.field}`);

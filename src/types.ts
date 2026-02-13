@@ -185,6 +185,20 @@ export interface WebLoadConfig {
 
 // ─── LLM configuration ──────────────────────────────────────
 
+/** Configuration for loading documents from a git repository */
+export interface GitLoadConfig {
+  /** Path to local git repository */
+  repoPath: string;
+  /** Git ref to read from (default: 'HEAD') */
+  ref?: string;
+  /** File glob patterns to include. If not set, includes all text files. */
+  include?: string[];
+  /** File glob patterns to exclude (default: ['node_modules/**', '.git/**', 'dist/**', '*.lock', 'package-lock.json']) */
+  exclude?: string[];
+  /** Max file size in bytes to include (default: 100000 = 100KB) */
+  maxFileSize?: number;
+}
+
 /** Configuration for LLM-powered summarization and classification. */
 export interface LLMConfig {
   /** LLM provider (default: 'openai'). Extensible for future providers. */

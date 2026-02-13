@@ -266,7 +266,7 @@ export async function loadFromGit(config: GitLoadConfig): Promise<IngestDocument
       // Check file size
       const sizeStr = await gitExec(repoPath, ['cat-file', '-s', `${ref}:${filePath}`]);
       const size = parseInt(sizeStr, 10);
-      if (size > maxFileSize) continue;
+      if (!Number.isFinite(size) || size > maxFileSize) continue;
 
       // Read file content
       const content = await gitExec(repoPath, ['show', `${ref}:${filePath}`]);

@@ -3,7 +3,8 @@ import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKe
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
 import { processDocuments, loadDirectory, extractiveSummarize } from './ingest.js';
-import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult } from './types.js';
+import { loadFromPostgres, loadFromUrls } from './adapters.js';
+import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, WebLoadConfig } from './types.js';
 
 export interface BlinkOptions {
   dbPath?: string;
@@ -87,6 +88,22 @@ export class Blink {
     return this.ingest(docs, options);
   }
 
+  /** Load rows from PostgreSQL and ingest as Blink records */
+  async ingestFromPostgres(config: PostgresLoadConfig, options: IngestOptions): Promise<IngestResult> {
+    const docs = await loadFromPostgres(config);
+    return this.ingest(docs, options);
+  }
+
+  /** Load web pages from URLs and ingest as Blink records */
+  async ingestFromUrls(
+    urls: string[],
+    options: IngestOptions,
+    loadOptions?: Omit<WebLoadConfig, 'urls'>,
+  ): Promise<IngestResult> {
+    const docs = await loadFromUrls(urls, loadOptions);
+    return this.ingest(docs, options);
+  }
+
   /** Close the database connection */
   close(): void {
     this.db.close();
@@ -98,6 +115,7 @@ export type {
   BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
   IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback,
   DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
+  PostgresLoadConfig, WebLoadConfig,
 } from './types.js';
 
 // Re-export ingestion helpers
@@ -108,3 +126,9 @@ export {
   FILESYSTEM_DERIVERS,
   filesystemNamespace, filesystemTitle, filesystemTags, filesystemSources,
 } from './ingest.js';
+
+// Re-export adapter functions
+export { loadFromPostgres, loadFromUrls } from './adapters.js';
+
+// Re-export adapter utilities
+export { stripHtml, parseUrl } from './adapters.js';

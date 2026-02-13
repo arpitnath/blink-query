@@ -160,3 +160,25 @@ export interface IngestResult {
   total: number;
   elapsed: number;
 }
+
+// ─── Adapter config types ────────────────────────────────────
+
+/** Configuration for loading documents from PostgreSQL */
+export interface PostgresLoadConfig {
+  connectionString: string;
+  query: string;
+  textColumn: string;
+  idColumn?: string;
+  titleColumn?: string;
+  metadataColumns?: string[];
+  table?: string;
+  schema?: string;
+}
+
+/** Configuration for loading documents from web URLs */
+export interface WebLoadConfig {
+  urls: string[];
+  concurrency?: number;
+  timeout?: number;
+  extractText?: (html: string, url: string) => string;
+}

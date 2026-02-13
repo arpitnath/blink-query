@@ -94,8 +94,8 @@ export type ClassifyCallback = (
 
 /** Options for blink.ingest() */
 export interface IngestOptions {
-  /** Required: produces a summary string from document text */
-  summarize: SummarizeCallback;
+  /** Optional: produces a summary string from document text (defaults to extractive summarizer) */
+  summarize?: SummarizeCallback;
   /** Optional: classifies document into a RecordType (default: SOURCE) */
   classify?: ClassifyCallback;
   /** Optional: explicit namespace string or function deriving namespace from metadata */

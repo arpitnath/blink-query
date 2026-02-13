@@ -66,7 +66,7 @@ const STOP_WORDS = new Set([
   'about', 'up', 'out', 'if', 'then', 'that', 'this', 'it', 'its',
 ]);
 
-function slug(text: string): string {
+export function slug(text: string): string {
   return text
     .toLowerCase()
     .normalize('NFKD')

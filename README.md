@@ -23,6 +23,13 @@ npm install blink-query
 npm install llamaindex @llamaindex/readers
 ```
 
+### Testing & Experimentation
+
+```typescript
+// In-memory database for testing (no files created)
+const blink = new Blink({ dbPath: ':memory:' });
+```
+
 ### Library API
 
 ```typescript
@@ -96,6 +103,20 @@ blink serve
 - **File ingestion** — Load docs from disk with LlamaIndex or basic fs walker
 - **Transaction safety** — All writes atomic via SQLite transactions
 - **MCP server** — AI agents connect via Model Context Protocol
+
+### API Design
+
+All CRUD operations (`save`, `get`, `resolve`, `search`, `list`, `query`, `delete`, `move`) are **synchronous** — no `await` needed. Only ingestion methods (`ingest`, `ingestDirectory`) are async, since your summarizer callback may call an LLM.
+
+### Error Handling
+
+- `resolve()` returns a status object: `{ status: 'OK' | 'NXDOMAIN' | 'STALE' | 'ALIAS_LOOP', record }` — check `status` before using `record`
+- `get()` returns `null` if the path doesn't exist
+- `delete()` returns `false` if the record wasn't found
+- `move()` returns `null` if the source doesn't exist
+- `query()` throws on invalid query syntax
+- `save()` throws on invalid input (e.g., ALIAS without target)
+- All sync operations throw on database errors
 
 ---
 

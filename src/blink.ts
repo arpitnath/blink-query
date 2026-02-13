@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones } from './store.js';
+import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
 import { processDocuments, loadDirectory, extractiveSummarize } from './ingest.js';
@@ -31,10 +31,15 @@ export class Blink {
     return resolve(this.db, path);
   }
 
+  /** Preview the path that would be generated for a given namespace and title */
+  pathFor(namespace: string, title: string): string {
+    return `${namespace}/${slug(title)}`;
+  }
+
   /** Search by space-separated keywords */
-  search(keywords: string, namespace?: string, limit?: number): BlinkRecord[] {
+  search(keywords: string, options?: { namespace?: string; limit?: number }): BlinkRecord[] {
     const kws = keywords.split(/\s+/).filter(Boolean);
-    return searchByKeywords(this.db, kws, namespace, limit);
+    return searchByKeywords(this.db, kws, options?.namespace, options?.limit);
   }
 
   /** List records in a namespace */

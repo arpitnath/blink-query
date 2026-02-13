@@ -164,6 +164,16 @@ describe('blink.ingest()', () => {
     expect(result.errors[0].error.message).toBe('LLM timeout');
   });
 
+  it('uses default extractive summarizer when summarize not provided', async () => {
+    const blink = new Blink({ dbPath: ':memory:' });
+    const result = await blink.ingest(
+      [mockDoc({ id: '1', metadata: { file_path: 'a/one.md', file_name: 'one.md', file_type: '.md' } })],
+      {} // No summarize callback
+    );
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0].summary).toBeTruthy();
+  });
+
   it('records are retrievable after ingestion', async () => {
     await blink.ingest(
       [mockDoc({ id: '1', metadata: { file_path: 'docs/readme.md', file_name: 'readme.md', file_type: '.md' } })],

@@ -65,7 +65,8 @@ export async function documentToSaveInput(
   doc: IngestDocument,
   options: IngestOptions,
 ): Promise<SaveInput> {
-  const summary = await options.summarize(doc.text, doc.metadata);
+  const summarize = options.summarize || extractiveSummarize(500);
+  const summary = await summarize(doc.text, doc.metadata);
   const type: RecordType = options.classify
     ? await options.classify(doc.text, doc.metadata)
     : 'SOURCE';

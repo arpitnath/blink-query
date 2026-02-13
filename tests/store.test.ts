@@ -10,6 +10,7 @@ import {
   listZones,
   searchByKeywords,
   extractKeywords,
+  slug,
 } from '../src/store.js';
 
 let db: Database;
@@ -163,6 +164,13 @@ describe('store', () => {
       const results = searchByKeywords(db, ['redis', 'caching']);
       expect(results[0].title).toBe('Redis Caching');
     });
+  });
+});
+
+describe('slug', () => {
+  it('produces expected path segments', () => {
+    expect(slug('Hello World')).toBe('hello-world');
+    expect(slug('API Reference')).toBe('api-reference');
   });
 });
 

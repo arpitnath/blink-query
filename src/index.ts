@@ -3,14 +3,23 @@ import { Blink } from './blink.js';
 import { startMCPServer } from './mcp.js';
 import type { RecordType } from './types.js';
 
-const blink = new Blink();
-
 const program = new Command();
+
+let _blink: Blink | null = null;
+function getBlink(): Blink {
+  if (!_blink) {
+    const dbPath = program.opts().db;
+    _blink = new Blink(dbPath ? { dbPath } : undefined);
+  }
+  return _blink;
+}
 
 program
   .name('blink')
   .description('DNS-inspired knowledge resolution layer for AI agents')
-  .version('1.0.0');
+  .version('1.0.0')
+  .option('--json', 'Output results as JSON')
+  .option('--db <path>', 'Path to database file');
 
 // --- save ---
 program
@@ -34,7 +43,7 @@ program
       }
     }
 
-    const record = blink.save({
+    const record = getBlink().save({
       namespace: opts.ns,
       title: opts.title,
       type: opts.type as RecordType,
@@ -43,6 +52,11 @@ program
       tags: opts.tags ? opts.tags.split(',').map((t: string) => t.trim()) : [],
       ttl: opts.ttl,
     });
+
+    if (program.opts().json) {
+      console.log(JSON.stringify(record, null, 2));
+      return;
+    }
 
     console.log(`Saved: ${record.path}`);
     console.log(`  Type: ${record.type}`);
@@ -54,7 +68,13 @@ program
   .command('resolve <path>')
   .description('Resolve a path to a typed record')
   .action((path: string) => {
-    const result = blink.resolve(path);
+    const result = getBlink().resolve(path);
+
+    if (program.opts().json) {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status !== 'OK') process.exit(1);
+      return;
+    }
 
     if (result.status === 'NXDOMAIN') {
       console.log(`NXDOMAIN: ${path} not found`);
@@ -95,7 +115,12 @@ program
   .description('List records in a namespace')
   .option('--sort <sort>', 'Sort by: recent, hits, title', 'recent')
   .action((namespace: string, opts) => {
-    const records = blink.list(namespace, opts.sort);
+    const records = getBlink().list(namespace, opts.sort);
+
+    if (program.opts().json) {
+      console.log(JSON.stringify(records, null, 2));
+      return;
+    }
 
     if (records.length === 0) {
       console.log(`No records in ${namespace}`);
@@ -119,7 +144,12 @@ program
   .option('--limit <n>', 'Max results', parseInt, 10)
   .option('--ns <namespace>', 'Limit to namespace')
   .action((keywords: string[], opts) => {
-    const results = blink.search(keywords.join(' '), opts.ns, opts.limit);
+    const results = getBlink().search(keywords.join(' '), { namespace: opts.ns, limit: opts.limit });
+
+    if (program.opts().json) {
+      console.log(JSON.stringify(results, null, 2));
+      return;
+    }
 
     if (results.length === 0) {
       console.log('No results found');
@@ -141,7 +171,12 @@ program
   .description('Execute a Blink query')
   .action((querystring: string) => {
     try {
-      const results = blink.query(querystring);
+      const results = getBlink().query(querystring);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(results, null, 2));
+        return;
+      }
 
       if (results.length === 0) {
         console.log('No results');
@@ -156,6 +191,10 @@ program
         console.log();
       }
     } catch (err) {
+      if (program.opts().json) {
+        console.log(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2));
+        process.exit(1);
+      }
       console.error(`Query error: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
     }
@@ -166,7 +205,12 @@ program
   .command('zones')
   .description('List all zones with stats')
   .action(() => {
-    const zones = blink.zones();
+    const zones = getBlink().zones();
+
+    if (program.opts().json) {
+      console.log(JSON.stringify(zones, null, 2));
+      return;
+    }
 
     if (zones.length === 0) {
       console.log('No zones yet. Save a record to create one.');
@@ -188,7 +232,14 @@ program
   .command('delete <path>')
   .description('Delete a record')
   .action((path: string) => {
-    const deleted = blink.delete(path);
+    const deleted = getBlink().delete(path);
+
+    if (program.opts().json) {
+      console.log(JSON.stringify({ deleted, path }, null, 2));
+      if (!deleted) process.exit(1);
+      return;
+    }
+
     if (deleted) {
       console.log(`Deleted: ${path}`);
     } else {
@@ -202,7 +253,14 @@ program
   .command('move <from> <to>')
   .description('Move a record to a new path')
   .action((from: string, to: string) => {
-    const record = blink.move(from, to);
+    const record = getBlink().move(from, to);
+
+    if (program.opts().json) {
+      console.log(JSON.stringify(record, null, 2));
+      if (!record) process.exit(1);
+      return;
+    }
+
     if (record) {
       console.log(`Moved: ${from} → ${record.path}`);
     } else {
@@ -237,13 +295,18 @@ program
       return;
     }
 
-    const result = await blink.ingest(docs, {
+    const result = await getBlink().ingest(docs, {
       summarize: extractiveSummarize(opts.summaryLength),
       namespace: opts.ns || undefined,
       namespacePrefix: opts.ns ? undefined : opts.prefix,
       ttl: opts.ttl,
       tags: opts.tags ? opts.tags.split(',').map((t: string) => t.trim()) : undefined,
     });
+
+    if (program.opts().json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
 
     console.log(`\nIngested ${result.records.length} records in ${result.elapsed}ms`);
     if (result.errors.length > 0) {
@@ -264,7 +327,7 @@ program
   .command('serve')
   .description('Start the MCP server (stdio transport)')
   .action(async () => {
-    await startMCPServer();
+    await startMCPServer(program.opts().db);
   });
 
 program.parse();

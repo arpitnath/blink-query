@@ -126,7 +126,7 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
       case 'blink_search': {
         const keywordsStr = args?.keywords as string;
         if (!keywordsStr) throw new McpError(ErrorCode.InvalidParams, 'keywords is required');
-        const results = blink.search(keywordsStr, args?.namespace as string, (args?.limit as number) || 10);
+        const results = blink.search(keywordsStr, { namespace: args?.namespace as string, limit: (args?.limit as number) || 10 });
         return jsonResponse({ count: results.length, results });
       }
 

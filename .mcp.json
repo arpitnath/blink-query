@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "blink": {
+      "command": "/Users/arpit/.bun/bin/bun",
+      "args": ["/Users/arpit/Desktop/playground2.0/blink-query/dist/index.js", "serve"]
+    }
+  }
+}

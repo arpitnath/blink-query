@@ -32,6 +32,13 @@ export function resolve(db: Database, path: string, depth = 0): ResolveResponse 
     return resolve(db, target, depth + 1);
   }
 
+  // Check TTL for staleness
+  const age = (Date.now() - new Date(record.updated_at).getTime()) / 1000;
+  if (record.ttl > 0 && age > record.ttl) {
+    incrementHit(db, path);  // still count the hit
+    return { status: 'STALE', record };
+  }
+
   // Increment hit count
   incrementHit(db, path);
 

@@ -84,4 +84,91 @@ describe('resolver', () => {
     const result = resolve(db, 'test/bad-alias');
     expect(result.status).toBe('NXDOMAIN');
   });
+
+  // New tests for STALE status
+  it('returns STALE status when TTL has expired', () => {
+    // Create a record with TTL of 1 second and old timestamp
+    const oldTimestamp = new Date(Date.now() - 2000).toISOString(); // 2 seconds ago
+    db.prepare('INSERT INTO records (id, path, namespace, title, type, summary, content, content_hash, ttl, created_at, updated_at, tags, sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      'stale-record',
+      'test/stale',
+      'test',
+      'Stale Record',
+      'SUMMARY',
+      'This is stale',
+      null,
+      'hash',
+      1, // TTL = 1 second
+      oldTimestamp,
+      oldTimestamp,
+      '[]',
+      '[]'
+    );
+
+    const result = resolve(db, 'test/stale');
+    expect(result.status).toBe('STALE');
+    expect(result.record).not.toBeNull();
+    expect(result.record!.title).toBe('Stale Record');
+  });
+
+  it('returns OK status when TTL has not expired', () => {
+    // Create a record with TTL of 3600 seconds (1 hour) and recent timestamp
+    save(db, { namespace: 'test', title: 'Fresh', summary: 'Fresh record', ttl: 3600 });
+
+    const result = resolve(db, 'test/fresh');
+    expect(result.status).toBe('OK');
+    expect(result.record!.title).toBe('Fresh');
+  });
+
+  it('returns OK status when TTL is 0 (never expires)', () => {
+    // Create a record with TTL = 0, even with old timestamp
+    const oldTimestamp = new Date(Date.now() - 86400000).toISOString(); // 1 day ago
+    db.prepare('INSERT INTO records (id, path, namespace, title, type, summary, content, content_hash, ttl, created_at, updated_at, tags, sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      'no-ttl-record',
+      'test/no-ttl',
+      'test',
+      'No TTL',
+      'SUMMARY',
+      'Never expires',
+      null,
+      'hash',
+      0, // TTL = 0 (never expires)
+      oldTimestamp,
+      oldTimestamp,
+      '[]',
+      '[]'
+    );
+
+    const result = resolve(db, 'test/no-ttl');
+    expect(result.status).toBe('OK');
+    expect(result.record!.title).toBe('No TTL');
+  });
+
+  it('increments hit count even for STALE records', () => {
+    // Create a stale record
+    const oldTimestamp = new Date(Date.now() - 2000).toISOString();
+    db.prepare('INSERT INTO records (id, path, namespace, title, type, summary, content, content_hash, ttl, created_at, updated_at, tags, sources, hit_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      'stale-hit',
+      'test/stale-hit',
+      'test',
+      'Stale Hit',
+      'SUMMARY',
+      'Stale but tracked',
+      null,
+      'hash',
+      1,
+      oldTimestamp,
+      oldTimestamp,
+      '[]',
+      '[]',
+      0
+    );
+
+    const result = resolve(db, 'test/stale-hit');
+    expect(result.status).toBe('STALE');
+
+    // Check hit count was incremented
+    const record = db.prepare('SELECT hit_count FROM records WHERE path = ?').get('test/stale-hit') as { hit_count: number };
+    expect(record.hit_count).toBe(1);
+  });
 });

@@ -13,20 +13,38 @@ Query = _ resource:Resource clauses:Clause* _ {
   return merge(resource, clauses);
 }
 
-Clause = _ clause:(WhereClause / SinceClause / OrderByClause / LimitClause) { return clause; }
+Clause = _ clause:(WhereClause / SinceClause / OrderByClause / LimitClause / OffsetClause) { return clause; }
 
-WhereClause = "where"i _ conditions:ConditionList {
-  return { where: conditions };
+WhereClause = "where"i _ expr:OrExpr {
+  return { where: expr };
 }
 
-ConditionList = first:Condition rest:(_ "and"i _ c:Condition { return c; })* {
-  return [first, ...rest];
+// OR has lower precedence than AND
+OrExpr = first:AndExpr rest:(_ "or"i _ e:AndExpr { return e; })* {
+  if (rest.length === 0) return first;
+  return { type: 'or', children: [first, ...rest] };
 }
+
+// AND has higher precedence than OR
+AndExpr = first:Atom rest:(_ "and"i _ a:Atom { return a; })* {
+  if (rest.length === 0) return first;
+  return { type: 'and', children: [first, ...rest] };
+}
+
+// Atom: either a parenthesized expression or a condition
+Atom = "(" _ expr:OrExpr _ ")" { return expr; } / Condition
 
 Condition
-  = field:Identifier _ op:Operator _ value:Value {
+  = field:Identifier _ "in"i _ "(" _ values:ValueList _ ")" {
+    return { field, op: 'in', value: values };
+  }
+  / field:Identifier _ op:Operator _ value:Value {
     return { field, op, value };
   }
+
+ValueList = first:Value rest:(_ "," _ v:Value { return v; })* {
+  return [first, ...rest];
+}
 
 Operator
   = "contains" { return "contains"; }
@@ -48,6 +66,8 @@ OrderByClause = "order"i _ "by"i _ field:Identifier _ dir:Direction? {
 Direction = "asc"i { return "asc"; } / "desc"i { return "desc"; }
 
 LimitClause = "limit"i _ n:Integer { return { limit: n }; }
+
+OffsetClause = "offset"i _ n:Integer { return { offset: n }; }
 
 Value = QuotedString / Number / Identifier
 QuotedString = "'" chars:$[^']* "'" { return chars; }

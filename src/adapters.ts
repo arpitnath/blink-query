@@ -1,24 +1,4 @@
-import type { IngestDocument, Source } from './types.js';
-
-// ─── Config interfaces ──────────────────────────────────────
-
-export interface PostgresLoadConfig {
-  connectionString: string;
-  query: string;
-  textColumn: string;
-  idColumn?: string;
-  titleColumn?: string;
-  metadataColumns?: string[];
-  table?: string;
-  schema?: string;
-}
-
-export interface WebLoadConfig {
-  urls: string[];
-  concurrency?: number;
-  timeout?: number;
-  extractText?: (html: string, url: string) => string;
-}
+import type { IngestDocument, Source, PostgresLoadConfig, WebLoadConfig } from './types.js';
 
 // ─── HTML text extraction helper ─────────────────────────────
 
@@ -69,6 +49,18 @@ function parseDatabaseFromConnectionString(connectionString: string): string {
   }
 }
 
+/** Sanitize connection string by removing password to prevent credential leaks in metadata. */
+function sanitizeConnectionString(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    if (url.password) url.password = '***';
+    return url.toString();
+  } catch {
+    // Key=value format: mask password values
+    return connectionString.replace(/(password\s*=\s*)\S+/i, '$1***');
+  }
+}
+
 export async function loadFromPostgres(config: PostgresLoadConfig): Promise<IngestDocument[]> {
   let pg: any;
   try {
@@ -103,7 +95,7 @@ export async function loadFromPostgres(config: PostgresLoadConfig): Promise<Inge
         schema: config.schema || 'public',
         database,
         row_id: id,
-        connection_string: config.connectionString,
+        connection_string: sanitizeConnectionString(config.connectionString),
       };
 
       // Add metadata columns

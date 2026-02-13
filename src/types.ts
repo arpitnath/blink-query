@@ -182,3 +182,21 @@ export interface WebLoadConfig {
   timeout?: number;
   extractText?: (html: string, url: string) => string;
 }
+
+// ─── LLM configuration ──────────────────────────────────────
+
+/** Configuration for LLM-powered summarization and classification. */
+export interface LLMConfig {
+  /** LLM provider (default: 'openai'). Extensible for future providers. */
+  provider?: 'openai';
+  /** Model identifier (default: 'gpt-4o-mini') */
+  model?: string;
+  /** API key — overrides the provider's env var (e.g., OPENAI_API_KEY) */
+  apiKey?: string;
+  /** Truncate input text to this many characters (default: 8000) */
+  maxInputChars?: number;
+  /** Custom system prompt for the LLM */
+  systemPrompt?: string;
+  /** Sampling temperature (default: 0.3) */
+  temperature?: number;
+}

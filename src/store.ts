@@ -118,20 +118,23 @@ export function initDB(dbPath?: string): Database {
 }
 
 export function migrateFTS(db: Database): void {
-  // Check if old keywords table exists
+  // Check if old keywords table exists — migrate and drop it
   const hasKeywords = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='keywords'").get();
   if (hasKeywords) {
-    // Drop old keywords table and index
     db.exec('DROP TABLE IF EXISTS keywords');
   }
 
-  // Rebuild FTS from records table
+  // Only rebuild FTS if it's empty but records exist (first run or migration)
+  const ftsCount = (db.prepare('SELECT COUNT(*) as cnt FROM records_fts').get() as { cnt: number }).cnt;
+  const recordCount = (db.prepare('SELECT COUNT(*) as cnt FROM records').get() as { cnt: number }).cnt;
+
+  if (ftsCount > 0 || recordCount === 0) return;
+
+  // Rebuild FTS index from existing records
   const records = db.prepare('SELECT path, title, tags, summary FROM records').all() as any[];
   const insertFTS = db.prepare('INSERT INTO records_fts (record_path, title, tags, summary) VALUES (?, ?, ?, ?)');
 
   const doMigrate = db.transaction(() => {
-    // Clear existing FTS data
-    db.exec('DELETE FROM records_fts');
     for (const r of records) {
       const tags = JSON.parse(r.tags || '[]').join(' ');
       insertFTS.run(r.path, r.title, tags, r.summary || '');

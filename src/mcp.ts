@@ -32,7 +32,7 @@ const TOOLS = [
         title: { type: 'string', description: 'Human-readable title' },
         type: {
           type: 'string',
-          enum: ['SUMMARY', 'META', 'SOURCE', 'ALIAS'],
+          enum: ['SUMMARY', 'META', 'COLLECTION', 'SOURCE', 'ALIAS'],
           description: 'Record type (default: SUMMARY)',
         },
         summary: { type: 'string', description: 'The content text' },

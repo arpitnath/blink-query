@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { extname, basename } from 'path';
 import type { IngestDocument, Source, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo, WebLoadConfig, GitLoadConfig } from './types.js';
+import { validatePostgresWhere } from './validation.js';
 
 // ─── HTML text extraction helper ─────────────────────────────
 
@@ -302,6 +303,11 @@ export async function loadFromPostgresProgressive(
     if (!orderBy) {
       orderBy = introspection.primaryKey || introspection.columns[0].name;
     }
+  }
+
+  // Validate WHERE clause for SQL injection before building queries
+  if (config.where) {
+    validatePostgresWhere(config.where);
   }
 
   const allDocs: IngestDocument[] = [];

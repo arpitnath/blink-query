@@ -4,6 +4,7 @@ import { mkdirSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
 import type { BlinkRecord, SaveInput, Zone } from './types.js';
+import { validateSaveInput } from './validation.js';
 
 const DEFAULT_TTL = 2592000; // 30 days
 
@@ -185,6 +186,10 @@ function removeKeywords(db: Database, recordPath: string): void {
 }
 
 export function searchByKeywords(db: Database, keywords: string[], namespace?: string, limit = 10): BlinkRecord[] {
+  // Cap keywords to prevent excessive SQL placeholders
+  if (keywords.length > 50) {
+    keywords = keywords.slice(0, 50);
+  }
   const placeholders = keywords.map(() => '?').join(', ');
   let sql = `
     SELECT r.* FROM records r
@@ -237,33 +242,35 @@ function deserializeRecord(row: RawRecord): BlinkRecord {
 }
 
 export function save(db: Database, input: SaveInput): BlinkRecord {
-  const type = input.type || 'SUMMARY';
+  // Validate and clean input at the boundary
+  const cleanedInput = validateSaveInput(input);
+  const type = cleanedInput.type || 'SUMMARY';
 
   // A5: Validate ALIAS content on save
   if (type === 'ALIAS') {
-    const aliasContent = input.content as { target?: string } | null;
+    const aliasContent = cleanedInput.content as { target?: string } | null;
     if (!aliasContent?.target || typeof aliasContent.target !== 'string') {
       throw new Error('ALIAS records require content with a "target" string field');
     }
   }
 
-  let path = input.namespace + '/' + slug(input.title);
-  const tags = input.tags || [];
-  const summary = input.summary || null;
-  const content = input.content ? JSON.stringify(input.content) : null;
+  let path = cleanedInput.namespace + '/' + slug(cleanedInput.title);
+  const tags = cleanedInput.tags || [];
+  const summary = cleanedInput.summary || null;
+  const content = cleanedInput.content ? JSON.stringify(cleanedInput.content) : null;
   const hash = contentHash(summary || content || '');
   const tokens = summary ? tokenCount(summary) : 0;
   const timestamp = now();
-  const ttl = input.ttl || DEFAULT_TTL;
-  const sources = input.sources ? JSON.stringify(input.sources) : '[]';
+  const ttl = cleanedInput.ttl || DEFAULT_TTL;
+  const sources = cleanedInput.sources ? JSON.stringify(cleanedInput.sources) : '[]';
 
   // A2: Handle slug collisions — different titles producing the same slug
   let counter = 2;
   while (true) {
     const existing = db.prepare('SELECT id, title FROM records WHERE path = ?').get(path) as { id: string; title: string } | null;
     if (!existing) break;
-    if (existing.title === input.title) break; // Same title = upsert
-    path = input.namespace + '/' + slug(input.title) + `-${counter}`;
+    if (existing.title === cleanedInput.title) break; // Same title = upsert
+    path = cleanedInput.namespace + '/' + slug(cleanedInput.title) + `-${counter}`;
     counter++;
   }
 

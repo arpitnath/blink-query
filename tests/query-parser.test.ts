@@ -9,25 +9,28 @@ describe('query parser', () => {
 
   it('parses WHERE with single condition', () => {
     const ast = parseQuery("discoveries where tag='auth'");
-    expect(ast.where).toHaveLength(1);
-    expect(ast.where![0]).toEqual({ field: 'tag', op: '=', value: 'auth' });
+    expect(ast.where).toEqual({ field: 'tag', op: '=', value: 'auth' });
   });
 
   it('parses WHERE with multiple AND conditions', () => {
     const ast = parseQuery("discoveries where tag='auth' and category='pattern'");
-    expect(ast.where).toHaveLength(2);
-    expect(ast.where![0].field).toBe('tag');
-    expect(ast.where![1].field).toBe('category');
+    expect(ast.where).toEqual({
+      type: 'and',
+      children: [
+        { field: 'tag', op: '=', value: 'auth' },
+        { field: 'category', op: '=', value: 'pattern' }
+      ]
+    });
   });
 
   it('parses all operators', () => {
-    expect(parseQuery("x where a='b'").where![0].op).toBe('=');
-    expect(parseQuery("x where a!='b'").where![0].op).toBe('!=');
-    expect(parseQuery("x where a>5").where![0].op).toBe('>');
-    expect(parseQuery("x where a<5").where![0].op).toBe('<');
-    expect(parseQuery("x where a>=5").where![0].op).toBe('>=');
-    expect(parseQuery("x where a<=5").where![0].op).toBe('<=');
-    expect(parseQuery("x where a contains 'test'").where![0].op).toBe('contains');
+    expect((parseQuery("x where a='b'").where as any).op).toBe('=');
+    expect((parseQuery("x where a!='b'").where as any).op).toBe('!=');
+    expect((parseQuery("x where a>5").where as any).op).toBe('>');
+    expect((parseQuery("x where a<5").where as any).op).toBe('<');
+    expect((parseQuery("x where a>=5").where as any).op).toBe('>=');
+    expect((parseQuery("x where a<=5").where as any).op).toBe('<=');
+    expect((parseQuery("x where a contains 'test'").where as any).op).toBe('contains');
   });
 
   it('parses ORDER BY', () => {
@@ -53,7 +56,13 @@ describe('query parser', () => {
   it('parses complex query with all clauses', () => {
     const ast = parseQuery("discoveries where tag='auth' and type='SUMMARY' order by hit_count desc limit 10");
     expect(ast.resource).toBe('discoveries');
-    expect(ast.where).toHaveLength(2);
+    expect(ast.where).toEqual({
+      type: 'and',
+      children: [
+        { field: 'tag', op: '=', value: 'auth' },
+        { field: 'type', op: '=', value: 'SUMMARY' }
+      ]
+    });
     expect(ast.orderBy).toEqual({ field: 'hit_count', direction: 'desc' });
     expect(ast.limit).toBe(10);
   });
@@ -74,10 +83,132 @@ describe('query parser', () => {
   it('parses deeply nested namespace with clauses', () => {
     const ast = parseQuery("projects/orpheus/sessions where tag='auth'");
     expect(ast.resource).toBe('projects/orpheus/sessions');
-    expect(ast.where).toHaveLength(1);
+    expect(ast.where).toEqual({ field: 'tag', op: '=', value: 'auth' });
   });
 
   it('throws on invalid syntax', () => {
     expect(() => parseQuery('??? invalid !!!')).toThrow();
+  });
+
+  // New tests for OR, IN, OFFSET
+  it('parses OR operator', () => {
+    const ast = parseQuery("ns where type='SUMMARY' or type='META'");
+    expect(ast.where).toEqual({
+      type: 'or',
+      children: [
+        { field: 'type', op: '=', value: 'SUMMARY' },
+        { field: 'type', op: '=', value: 'META' }
+      ]
+    });
+  });
+
+  it('parses IN operator with multiple values', () => {
+    const ast = parseQuery("ns where type in ('SUMMARY', 'META', 'SOURCE')");
+    expect(ast.where).toEqual({
+      field: 'type',
+      op: 'in',
+      value: ['SUMMARY', 'META', 'SOURCE']
+    });
+  });
+
+  it('parses IN operator with single value', () => {
+    const ast = parseQuery("ns where id in ('abc123')");
+    expect(ast.where).toEqual({
+      field: 'id',
+      op: 'in',
+      value: ['abc123']
+    });
+  });
+
+  it('parses IN operator with numbers', () => {
+    const ast = parseQuery("ns where hit_count in (5, 10, 15)");
+    expect(ast.where).toEqual({
+      field: 'hit_count',
+      op: 'in',
+      value: [5, 10, 15]
+    });
+  });
+
+  it('parses OFFSET clause', () => {
+    const ast = parseQuery('ns limit 10 offset 20');
+    expect(ast.limit).toBe(10);
+    expect(ast.offset).toBe(20);
+  });
+
+  it('parses OFFSET without LIMIT', () => {
+    const ast = parseQuery('ns offset 5');
+    expect(ast.offset).toBe(5);
+  });
+
+  it('respects AND/OR precedence (AND binds tighter)', () => {
+    // a='1' and b='2' or c='3' should parse as: (a='1' and b='2') or c='3'
+    const ast = parseQuery("ns where a='1' and b='2' or c='3'");
+    expect(ast.where).toEqual({
+      type: 'or',
+      children: [
+        {
+          type: 'and',
+          children: [
+            { field: 'a', op: '=', value: '1' },
+            { field: 'b', op: '=', value: '2' }
+          ]
+        },
+        { field: 'c', op: '=', value: '3' }
+      ]
+    });
+  });
+
+  it('parses parentheses to override precedence', () => {
+    // a='1' and (b='2' or c='3') should parse as: a='1' and (b='2' or c='3')
+    const ast = parseQuery("ns where a='1' and (b='2' or c='3')");
+    expect(ast.where).toEqual({
+      type: 'and',
+      children: [
+        { field: 'a', op: '=', value: '1' },
+        {
+          type: 'or',
+          children: [
+            { field: 'b', op: '=', value: '2' },
+            { field: 'c', op: '=', value: '3' }
+          ]
+        }
+      ]
+    });
+  });
+
+  it('parses complex nested expression', () => {
+    const ast = parseQuery("ns where (a='1' or a='2') and (b='3' or b='4')");
+    expect(ast.where).toEqual({
+      type: 'and',
+      children: [
+        {
+          type: 'or',
+          children: [
+            { field: 'a', op: '=', value: '1' },
+            { field: 'a', op: '=', value: '2' }
+          ]
+        },
+        {
+          type: 'or',
+          children: [
+            { field: 'b', op: '=', value: '3' },
+            { field: 'b', op: '=', value: '4' }
+          ]
+        }
+      ]
+    });
+  });
+
+  it('combines OR + IN + OFFSET', () => {
+    const ast = parseQuery("ns where type in ('SUMMARY', 'META') or hit_count > 10 limit 5 offset 10");
+    expect(ast.where).toEqual({
+      type: 'or',
+      children: [
+        { field: 'type', op: 'in', value: ['SUMMARY', 'META'] },
+        { field: 'hit_count', op: '>', value: 10 }
+      ]
+    });
+    expect(ast.limit).toBe(5);
+    expect(ast.offset).toBe(10);
   });
 });

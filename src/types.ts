@@ -53,16 +53,23 @@ export interface Zone {
 // Query AST (output of Peggy parser)
 export interface QueryAST {
   resource: string;
-  where?: QueryCondition[];
+  where?: WhereExpr;
   orderBy?: { field: string; direction: 'asc' | 'desc' };
   limit?: number;
+  offset?: number;
   since?: string;
 }
 
+// Recursive where expression tree (supports AND/OR)
+export type WhereExpr =
+  | { type: 'and'; children: WhereExpr[] }
+  | { type: 'or'; children: WhereExpr[] }
+  | QueryCondition;
+
 export interface QueryCondition {
   field: string;
-  op: '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains';
-  value: string | number;
+  op: '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains' | 'in';
+  value: string | number | (string | number)[];
 }
 
 // Resolution response

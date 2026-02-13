@@ -55,6 +55,13 @@ describe('ingest integration', () => {
     }
   });
 
+  it('skips binary files gracefully', async () => {
+    // binary.dat exists but is not in default extensions
+    const docs = await loadDirectory(FIXTURES);
+    const hasBinary = docs.some(d => (d.metadata.file_name as string) === 'binary.dat');
+    expect(hasBinary).toBe(false);
+  });
+
   it('records are searchable after ingestion', async () => {
     const docs = await loadDirectory(FIXTURES);
     await blink.ingest(docs, {

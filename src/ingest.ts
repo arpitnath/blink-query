@@ -192,19 +192,24 @@ async function loadDirectoryBasic(
       if (entry.isDirectory() && options?.recursive !== false) {
         await walk(fullPath);
       } else if (entry.isFile() && allowedExts.has(ext(entry.name).toLowerCase())) {
-        const content = await readFile(fullPath, 'utf-8');
-        const stats = await stat(fullPath);
-        const relPath = relative(basePath, fullPath);
-        docs.push({
-          id: randomUUID(),
-          text: content,
-          metadata: {
-            file_path: relPath,
-            file_name: entry.name,
-            file_type: ext(entry.name),
-            file_size: stats.size,
-          },
-        });
+        try {
+          const content = await readFile(fullPath, 'utf-8');
+          const stats = await stat(fullPath);
+          const relPath = relative(basePath, fullPath);
+          docs.push({
+            id: randomUUID(),
+            text: content,
+            metadata: {
+              file_path: relPath,
+              file_name: entry.name,
+              file_type: ext(entry.name),
+              file_size: stats.size,
+            },
+          });
+        } catch {
+          // Skip files that can't be read as UTF-8
+          continue;
+        }
       }
     }
   }

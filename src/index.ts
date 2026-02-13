@@ -10,7 +10,7 @@ const program = new Command();
 program
   .name('blink')
   .description('DNS-inspired knowledge resolution layer for AI agents')
-  .version('0.1.0');
+  .version('1.0.0');
 
 // --- save ---
 program

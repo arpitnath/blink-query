@@ -75,4 +75,13 @@ describe('resolver', () => {
     const result = resolve(db, 'empty/');
     expect(result.status).toBe('NXDOMAIN');
   });
+
+  it('handles ALIAS with malformed content gracefully', () => {
+    // Bypass save validation by inserting directly
+    db.prepare('INSERT INTO records (id, path, namespace, title, type, content, content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      'bad-alias', 'test/bad-alias', 'test', 'bad-alias', 'ALIAS', JSON.stringify({ wrong: 'field' }), 'hash', new Date().toISOString(), new Date().toISOString()
+    );
+    const result = resolve(db, 'test/bad-alias');
+    expect(result.status).toBe('NXDOMAIN');
+  });
 });

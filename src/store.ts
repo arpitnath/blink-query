@@ -67,7 +67,7 @@ const STOP_WORDS = new Set([
 ]);
 
 function slug(text: string): string {
-  return text
+  const result = text
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[^\p{L}\p{N}\s-]/gu, '')
@@ -75,6 +75,12 @@ function slug(text: string): string {
     .replace(/-+/g, '-')
     .slice(0, 60)
     .replace(/^-|-$/g, '');
+
+  if (!result) {
+    // Fallback for emoji-only or special-char-only titles
+    return `record-${Date.now().toString(36)}`;
+  }
+  return result;
 }
 
 function contentHash(text: string): string {
@@ -232,7 +238,16 @@ function deserializeRecord(row: RawRecord): BlinkRecord {
 
 export function save(db: Database, input: SaveInput): BlinkRecord {
   const type = input.type || 'SUMMARY';
-  const path = input.namespace + '/' + slug(input.title);
+
+  // A5: Validate ALIAS content on save
+  if (type === 'ALIAS') {
+    const aliasContent = input.content as { target?: string } | null;
+    if (!aliasContent?.target || typeof aliasContent.target !== 'string') {
+      throw new Error('ALIAS records require content with a "target" string field');
+    }
+  }
+
+  let path = input.namespace + '/' + slug(input.title);
   const tags = input.tags || [];
   const summary = input.summary || null;
   const content = input.content ? JSON.stringify(input.content) : null;
@@ -241,6 +256,16 @@ export function save(db: Database, input: SaveInput): BlinkRecord {
   const timestamp = now();
   const ttl = input.ttl || DEFAULT_TTL;
   const sources = input.sources ? JSON.stringify(input.sources) : '[]';
+
+  // A2: Handle slug collisions — different titles producing the same slug
+  let counter = 2;
+  while (true) {
+    const existing = db.prepare('SELECT id, title FROM records WHERE path = ?').get(path) as { id: string; title: string } | null;
+    if (!existing) break;
+    if (existing.title === input.title) break; // Same title = upsert
+    path = input.namespace + '/' + slug(input.title) + `-${counter}`;
+    counter++;
+  }
 
   const doSave = db.transaction(() => {
     // Check for existing record at this path
@@ -372,6 +397,8 @@ export function queryRecords(
   limit?: number,
   since?: string
 ): BlinkRecord[] {
+  const ALLOWED_FIELDS = new Set(['type', 'title', 'namespace', 'id', 'path', 'hit_count', 'token_count', 'ttl', 'created_at', 'updated_at']);
+
   let sql = 'SELECT * FROM records WHERE (namespace = ? OR namespace LIKE ?)';
   const params: unknown[] = [namespacePrefix, namespacePrefix + '/%'];
 
@@ -389,12 +416,14 @@ export function queryRecords(
     } else if (cond.field === 'tag') {
       sql += ' AND EXISTS (SELECT 1 FROM keywords WHERE keyword = ? AND record_path = records.path)';
       params.push(String(cond.value).toLowerCase());
+    } else if (!ALLOWED_FIELDS.has(cond.field)) {
+      throw new Error(`Invalid query field: ${cond.field}`);
     } else if (['type', 'title', 'namespace', 'id', 'path'].includes(cond.field)) {
       sql += ` AND ${cond.field} ${cond.op} ?`;
       params.push(cond.value);
-    } else if (['hit_count', 'token_count', 'ttl'].includes(cond.field)) {
+    } else if (['hit_count', 'token_count', 'ttl', 'created_at', 'updated_at'].includes(cond.field)) {
       sql += ` AND ${cond.field} ${cond.op} ?`;
-      params.push(Number(cond.value));
+      params.push(cond.field === 'created_at' || cond.field === 'updated_at' ? cond.value : Number(cond.value));
     }
   }
 

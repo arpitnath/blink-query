@@ -90,7 +90,7 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
   const blink = new Blink({ dbPath });
 
   const server = new Server(
-    { name: 'blink-query', version: '0.1.0' },
+    { name: 'blink-query', version: '1.0.0' },
     { capabilities: { tools: {} } }
   );
 

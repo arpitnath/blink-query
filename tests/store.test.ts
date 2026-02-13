@@ -73,6 +73,23 @@ describe('store', () => {
       const meZone = zones.find(z => z.path === 'me');
       expect(meZone?.record_count).toBe(2);
     });
+
+    it('handles slug collisions with different titles', () => {
+      save(db, { namespace: 'test', title: 'Foo!' });
+      save(db, { namespace: 'test', title: 'foo?' });
+      const records = list(db, 'test');
+      expect(records.length).toBe(2);
+      expect(records.map(r => r.path).sort()).toEqual(['test/foo', 'test/foo-2'].sort());
+    });
+
+    it('handles emoji-only titles with fallback slug', () => {
+      const record = save(db, { namespace: 'test', title: '🎉🎊!!!' });
+      expect(record.path).toMatch(/^test\/record-/);
+    });
+
+    it('rejects ALIAS without valid target', () => {
+      expect(() => save(db, { namespace: 'test', title: 'bad-alias', type: 'ALIAS', content: { wrong: 'field' } })).toThrow('ALIAS records require content');
+    });
   });
 
   describe('getByPath', () => {

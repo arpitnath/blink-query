@@ -59,4 +59,8 @@ describe('query executor', () => {
     expect(results).toHaveLength(1);
     expect(results[0].title).toBe('JWT Auth');
   });
+
+  it('rejects invalid field names', () => {
+    expect(() => executeQuery(db, "test where invalid_field = 'foo'")).toThrow('Invalid query field');
+  });
 });

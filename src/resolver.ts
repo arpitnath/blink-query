@@ -24,8 +24,11 @@ export function resolve(db: Database, path: string, depth = 0): ResolveResponse 
 
   // Follow ALIAS chain
   if (record.type === 'ALIAS') {
-    const target = (record.content as { target: string })?.target;
-    if (!target) return { status: 'NXDOMAIN', record: null };
+    const content = record.content as { target?: string } | null;
+    const target = content?.target;
+    if (!target || typeof target !== 'string') {
+      return { status: 'NXDOMAIN' as const, record: null };
+    }
     return resolve(db, target, depth + 1);
   }
 

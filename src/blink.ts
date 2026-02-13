@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
-import { processDocuments, loadDirectory, extractiveSummarize } from './ingest.js';
+import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS } from './ingest.js';
 import { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, introspectPostgresTable, pickTextColumn } from './adapters.js';
 import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig } from './types.js';
 
@@ -105,7 +105,7 @@ export class Blink {
    */
   async ingestFromPostgresProgressive(
     config: PostgresProgressiveConfig,
-    options: IngestOptions,
+    options?: IngestOptions,
   ): Promise<IngestResult & { introspection: PostgresIntrospection }> {
     const schema = config.schema || 'public';
 
@@ -130,8 +130,13 @@ export class Blink {
     // Load all documents progressively
     const docs = await loadFromPostgresProgressive(resolvedConfig);
 
+    // Auto-apply POSTGRES_DERIVERS + extractiveSummarize when no options provided
+    const effectiveOptions: IngestOptions = options
+      ? { ...options }
+      : { ...POSTGRES_DERIVERS, summarize: extractiveSummarize(500) };
+
     // Ingest into Blink
-    const result = await this.ingest(docs, options);
+    const result = await this.ingest(docs, effectiveOptions);
 
     return { ...result, introspection };
   }

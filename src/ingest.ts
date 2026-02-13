@@ -92,7 +92,7 @@ export function postgresNamespace(
 export function postgresTitle(
   metadata: Record<string, unknown>,
 ): string {
-  if (metadata.title && typeof metadata.title === 'string') return metadata.title;
+  if (metadata.title && typeof metadata.title === 'string' && metadata.title.length > 0) return metadata.title;
   const table = (metadata.table as string) || 'unknown';
   const rowId = metadata.row_id;
   if (rowId !== undefined && rowId !== null && rowId !== '') {
@@ -152,7 +152,7 @@ export function webNamespace(
 export function webTitle(
   metadata: Record<string, unknown>,
 ): string {
-  if (metadata.title && typeof metadata.title === 'string') return metadata.title;
+  if (metadata.title && typeof metadata.title === 'string' && metadata.title.length > 0) return metadata.title;
   const url = metadata.url as string | undefined;
   if (url) {
     try {

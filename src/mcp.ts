@@ -7,6 +7,14 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { Blink } from './blink.js';
+import type { RecordType } from './types.js';
+
+// Input validation limits
+const MAX_PATH_LENGTH = 500;
+const MAX_TITLE_LENGTH = 1000;
+const MAX_SUMMARY_LENGTH = 100_000; // 100KB
+const MAX_QUERY_LENGTH = 5000;
+const MAX_KEYWORDS_LENGTH = 1000;
 
 const TOOLS = [
   {
@@ -32,7 +40,7 @@ const TOOLS = [
         title: { type: 'string', description: 'Human-readable title' },
         type: {
           type: 'string',
-          enum: ['SUMMARY', 'META', 'SOURCE', 'ALIAS'],
+          enum: ['SUMMARY', 'META', 'COLLECTION', 'SOURCE', 'ALIAS'],
           description: 'Record type (default: SUMMARY)',
         },
         summary: { type: 'string', description: 'The content text' },
@@ -80,6 +88,48 @@ const TOOLS = [
       required: ['query'],
     },
   },
+  {
+    name: 'blink_get',
+    description: 'Get a record by exact path (no resolution, no ALIAS following). Returns null if not found.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        path: { type: 'string', description: "Exact record path, e.g. 'me/background'" },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'blink_delete',
+    description: 'Delete a record by path. Returns true if deleted, false if not found.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        path: { type: 'string', description: 'Path of record to delete' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'blink_move',
+    description: 'Move/rename a record from one path to another.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        from: { type: 'string', description: 'Current path' },
+        to: { type: 'string', description: 'New path' },
+      },
+      required: ['from', 'to'],
+    },
+  },
+  {
+    name: 'blink_zones',
+    description: 'List all zones (top-level namespaces) with record counts and metadata.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
 ];
 
 function jsonResponse(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
@@ -103,6 +153,9 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
       case 'blink_resolve': {
         const path = args?.path as string;
         if (!path) throw new McpError(ErrorCode.InvalidParams, 'path is required');
+        if (path.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `path exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
         const result = blink.resolve(path);
         return jsonResponse(result);
       }
@@ -111,11 +164,32 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
         const namespace = args?.namespace as string;
         const title = args?.title as string;
         if (!namespace || !title) throw new McpError(ErrorCode.InvalidParams, 'namespace and title are required');
+
+        // Validate string lengths
+        if (namespace.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `namespace exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
+        if (title.length > MAX_TITLE_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `title exceeds maximum length of ${MAX_TITLE_LENGTH} characters`);
+        }
+        const summary = args?.summary as string;
+        if (summary && summary.length > MAX_SUMMARY_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `summary exceeds maximum length of ${MAX_SUMMARY_LENGTH} characters`);
+        }
+
+        // Validate RecordType
+        const VALID_TYPES = ['SUMMARY', 'META', 'COLLECTION', 'SOURCE', 'ALIAS'];
+        const typeArg = args?.type as string;
+        if (typeArg && !VALID_TYPES.includes(typeArg)) {
+          throw new McpError(ErrorCode.InvalidParams, `Invalid type: ${typeArg}. Must be one of: ${VALID_TYPES.join(', ')}`);
+        }
+        const type = (typeArg || 'SUMMARY') as RecordType;
+
         const record = blink.save({
           namespace,
           title,
-          type: (args?.type as string as any) || 'SUMMARY',
-          summary: args?.summary as string,
+          type,
+          summary,
           content: args?.content,
           tags: args?.tags as string[],
           ttl: args?.ttl as number,
@@ -126,13 +200,23 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
       case 'blink_search': {
         const keywordsStr = args?.keywords as string;
         if (!keywordsStr) throw new McpError(ErrorCode.InvalidParams, 'keywords is required');
-        const results = blink.search(keywordsStr, { namespace: args?.namespace as string, limit: (args?.limit as number) || 10 });
+        if (keywordsStr.length > MAX_KEYWORDS_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `keywords exceed maximum length of ${MAX_KEYWORDS_LENGTH} characters`);
+        }
+        const namespace = args?.namespace as string;
+        if (namespace && namespace.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `namespace exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
+        const results = blink.search(keywordsStr, { namespace, limit: (args?.limit as number) || 10 });
         return jsonResponse({ count: results.length, results });
       }
 
       case 'blink_list': {
         const namespace = args?.namespace as string;
         if (!namespace) throw new McpError(ErrorCode.InvalidParams, 'namespace is required');
+        if (namespace.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `namespace exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
         const results = blink.list(namespace, (args?.sort as 'recent' | 'hits' | 'title') || 'recent');
         return jsonResponse({ count: results.length, results });
       }
@@ -140,6 +224,9 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
       case 'blink_query': {
         const query = args?.query as string;
         if (!query) throw new McpError(ErrorCode.InvalidParams, 'query is required');
+        if (query.length > MAX_QUERY_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `query exceeds maximum length of ${MAX_QUERY_LENGTH} characters`);
+        }
         try {
           const results = blink.query(query);
           return jsonResponse({ count: results.length, results });
@@ -147,6 +234,53 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
           const message = err instanceof Error ? err.message : String(err);
           throw new McpError(ErrorCode.InvalidParams, `Query parse error: ${message}`);
         }
+      }
+
+      case 'blink_get': {
+        const path = args?.path as string;
+        if (!path) throw new McpError(ErrorCode.InvalidParams, 'path is required');
+        if (path.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `path exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
+        const record = blink.get(path);
+        if (record) {
+          return jsonResponse({ record });
+        } else {
+          return jsonResponse({ status: 'not_found' });
+        }
+      }
+
+      case 'blink_delete': {
+        const path = args?.path as string;
+        if (!path) throw new McpError(ErrorCode.InvalidParams, 'path is required');
+        if (path.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `path exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
+        const deleted = blink.delete(path);
+        return jsonResponse({ deleted });
+      }
+
+      case 'blink_move': {
+        const from = args?.from as string;
+        const to = args?.to as string;
+        if (!from || !to) throw new McpError(ErrorCode.InvalidParams, 'from and to are required');
+        if (from.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `from path exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
+        if (to.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `to path exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
+        }
+        const record = blink.move(from, to);
+        if (record) {
+          return jsonResponse({ moved: true, record });
+        } else {
+          return jsonResponse({ moved: false });
+        }
+      }
+
+      case 'blink_zones': {
+        const zones = blink.zones();
+        return jsonResponse({ count: zones.length, zones });
       }
 
       default:

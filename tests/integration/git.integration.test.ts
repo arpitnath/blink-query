@@ -2,10 +2,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { loadFromGit } from '../../src/adapters.js';
 import { Blink, GIT_DERIVERS, extractiveSummarize } from '../../src/blink.js';
 import type { GitLoadConfig } from '../../src/types.js';
-import { resolve } from 'path';
+import { resolve, basename } from 'path';
 import { execSync } from 'child_process';
 
 const REPO_PATH = resolve(__dirname, '../..');
+const REPO_NAME = basename(REPO_PATH);
 
 describe('loadFromGit', () => {
   it('loads files from a git repository', async () => {
@@ -72,7 +73,7 @@ describe('ingestFromGit (E2E)', () => {
   });
 
   it('creates records accessible via resolve', () => {
-    const result = blink.resolve('git/blink-query-git/');
+    const result = blink.resolve(`git/${REPO_NAME}/`);
     expect(result.status).toBe('OK');
     expect(result.record).not.toBeNull();
   });

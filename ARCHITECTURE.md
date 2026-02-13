@@ -8,15 +8,66 @@ Version: 1.0.0 | Last Updated: 2026-02-13
 
 ## Overview
 
-Blink is a knowledge resolution system that sits between **ingestion** (loading documents) and **consumption** (AI agents querying knowledge). It stores typed knowledge records in SQLite and provides DNS-like resolution semantics.
+Blink is a knowledge resolution system that sits between **ingestion** (loading documents from any source) and **consumption** (AI agents querying knowledge). It stores typed knowledge records in SQLite and provides DNS-like resolution semantics.
 
 ```
-Files/APIs → [Ingestion] → Blink Records → [Resolution] → AI Agents
-                ↓                              ↓
-         LlamaIndex.TS              5 Record Types + Query DSL
+                    ┌──────────────────────────────────────────┐
+                    │           Data Sources                    │
+                    │  Files  PostgreSQL  Web URLs  Git Repos  │
+                    └────────────┬─────────────────────────────┘
+                                 │
+                    ┌────────────▼─────────────────────────────┐
+                    │        Adapters (src/adapters.ts)         │
+                    │  loadFromPostgres()  loadFromUrls()       │
+                    │  loadFromGit()       loadDirectory()      │
+                    │  introspectPostgresTable()                │
+                    └────────────┬─────────────────────────────┘
+                                 │  IngestDocument[]
+                    ┌────────────▼─────────────────────────────┐
+                    │     Ingestion Pipeline (src/ingest.ts)    │
+                    │  Derivers → documentToSaveInput()         │
+                    │  summarize() + classify() + deriveTags()  │
+                    │  processDocuments() → blink.saveMany()    │
+                    └────────────┬─────────────────────────────┘
+                                 │  BlinkRecord[]
+                    ┌────────────▼─────────────────────────────┐
+                    │      Storage Layer (src/store.ts)         │
+                    │  SQLite + better-sqlite3                  │
+                    │  Records, Zones, Keywords                 │
+                    └────────────┬─────────────────────────────┘
+                                 │
+              ┌──────────────────┼──────────────────────┐
+              │                  │                      │
+   ┌──────────▼───────┐  ┌──────▼──────────┐  ┌───────▼────────┐
+   │   Resolution      │  │   Query Engine   │  │   MCP Server   │
+   │  (resolver.ts)    │  │ (query-exec.ts)  │  │   (mcp.ts)     │
+   │  resolve(path)    │  │  Peggy DSL →     │  │  5 stdio tools │
+   │  ALIAS chains     │  │  SQLite WHERE    │  │  for AI agents │
+   │  auto-COLLECTION  │  │                  │  │                │
+   └───────────────────┘  └──────────────────┘  └────────────────┘
+              │                  │                      │
+              └──────────────────┼──────────────────────┘
+                                 │
+                    ┌────────────▼─────────────────────────────┐
+                    │           AI Agents / CLI                 │
+                    │  Library API (src/blink.ts)               │
+                    │  CLI (src/index.ts)                       │
+                    └──────────────────────────────────────────┘
 ```
 
 **Core Innovation**: Type carries consumption instruction, content carries domain semantics. A `SUMMARY` record tells the agent "read this directly", while a `SOURCE` record says "fetch full content if needed".
+
+---
+
+## The 5 Record Types
+
+| Type | Consumption Instruction | Use Case | Example |
+|------|------------------------|----------|---------|
+| **SUMMARY** | Read directly, no fetching needed | Key takeaways, TL;DRs | "Project roadmap Q1 highlights" |
+| **META** | Structured configuration data | Settings, status, counts | `{ status: "active", contributors: 12 }` |
+| **COLLECTION** | Browse children, pick what's relevant | Table of contents, listings | All docs in `projects/orpheus/*` |
+| **SOURCE** | Summary here, fetch source if depth needed | Large docs, external APIs | 50KB file → 500 char summary + file_path |
+| **ALIAS** | Follow redirect to target path | Shortcuts, renaming | `me/todo` → `tasks/personal/active` |
 
 ---
 
@@ -24,69 +75,66 @@ Files/APIs → [Ingestion] → Blink Records → [Resolution] → AI Agents
 
 ### 1. Storage Layer (`src/store.ts`)
 
-**SQLite database** with better-sqlite3 for Node.js compatibility.
+SQLite database with better-sqlite3 for Node.js compatibility.
 
 #### Schema
 
 ```sql
--- Core records table
 CREATE TABLE records (
-  id TEXT PRIMARY KEY,
-  path TEXT UNIQUE NOT NULL,           -- DNS-like: "projects/orpheus/readme"
-  namespace TEXT NOT NULL,             -- First segment: "projects"
-  title TEXT NOT NULL,
-  type TEXT NOT NULL,                  -- SUMMARY | META | COLLECTION | SOURCE | ALIAS
-  summary TEXT,
-  content TEXT,                        -- JSON-serialized
-  ttl INTEGER DEFAULT 2592000,
+  id           TEXT PRIMARY KEY,
+  path         TEXT UNIQUE NOT NULL,        -- DNS-like: "projects/orpheus/readme"
+  namespace    TEXT NOT NULL,               -- First segment: "projects"
+  title        TEXT NOT NULL,
+  type         TEXT NOT NULL,               -- SUMMARY | META | COLLECTION | SOURCE | ALIAS
+  summary      TEXT,
+  content      TEXT,                        -- JSON-serialized
+  ttl          INTEGER NOT NULL DEFAULT 2592000,
   content_hash TEXT NOT NULL,
-  token_count INTEGER DEFAULT 0,
-  hit_count INTEGER DEFAULT 0,
-  last_hit TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  tags         TEXT DEFAULT '[]',           -- JSON array
+  token_count  INTEGER DEFAULT 0,
+  hit_count    INTEGER DEFAULT 0,
+  last_hit     TEXT,
+  sources      TEXT DEFAULT '[]',           -- JSON array of Source objects
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
 );
 
--- Keyword index for search
-CREATE TABLE keywords (
-  record_id TEXT,
-  keyword TEXT,
-  FOREIGN KEY (record_id) REFERENCES records(id)
-);
+-- Indexes: namespace, type, updated_at, hit_count DESC
 
--- Zone metadata (namespace SOA)
 CREATE TABLE zones (
-  path TEXT PRIMARY KEY,
-  description TEXT,
-  default_ttl INTEGER DEFAULT 2592000,
-  record_count INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL,
+  path          TEXT PRIMARY KEY,
+  description   TEXT,
+  default_ttl   INTEGER DEFAULT 2592000,
+  record_count  INTEGER DEFAULT 0,
+  created_at    TEXT NOT NULL,
   last_modified TEXT NOT NULL
 );
 
--- Sources (web, file, manual origins)
-CREATE TABLE sources (
-  record_id TEXT,
-  type TEXT NOT NULL,
-  url TEXT,
-  file_path TEXT,
-  last_fetched TEXT,
-  FOREIGN KEY (record_id) REFERENCES records(id)
+CREATE TABLE keywords (
+  keyword      TEXT NOT NULL,
+  record_path  TEXT NOT NULL,
+  PRIMARY KEY (keyword, record_path),
+  FOREIGN KEY (record_path) REFERENCES records(path) ON DELETE CASCADE
 );
 ```
 
 #### Key Functions
 
-- `initDB(dbPath?)` — Initialize database with schema
-- `save(db, input: SaveInput)` — Upsert record (transaction-wrapped)
-- `saveMany(db, inputs[])` — Bulk save in single transaction
-- `getByPath(db, path)` — Direct lookup by path
-- `list(db, namespace, sort?, limit?)` — List records in namespace
-- `searchByKeywords(db, keywords[], namespace?, limit?)` — Full-text search
-- `deleteRecord(db, path)` — Delete (transaction-wrapped)
-- `move(db, fromPath, toPath)` — Rename (transaction-wrapped)
+| Function | Description |
+|----------|-------------|
+| `initDB(dbPath?)` | Initialize database with schema (`:memory:` supported) |
+| `save(db, input)` | Upsert record (transaction-wrapped) |
+| `saveMany(db, inputs[])` | Bulk save in single transaction |
+| `getByPath(db, path)` | Direct lookup by path |
+| `list(db, namespace, sort?)` | List records in namespace |
+| `searchByKeywords(db, keywords[])` | Keyword-based search |
+| `deleteRecord(db, path)` | Delete record (transaction-wrapped) |
+| `move(db, from, to)` | Rename record (transaction-wrapped) |
+| `slug(text)` | Unicode-aware slugification with fallback |
 
 **Transaction safety**: All writes wrapped in `db.transaction()` for atomicity.
+
+**Slug algorithm**: NFKD normalize → strip non-`[\p{L}\p{N}\s-]` → lowercase → hyphenate → max 60 chars → fallback to UUID prefix if empty.
 
 ---
 
@@ -94,121 +142,216 @@ CREATE TABLE sources (
 
 DNS-inspired path resolution with intelligent record fetching.
 
-#### Resolution Algorithm
-
-```typescript
-function resolve(db: Database, path: string): ResolveResponse {
-  1. Lookup record by path
-  2. If not found → return NXDOMAIN
-  3. If TTL expired → return STALE
-  4. If ALIAS → follow redirect (max 5 hops) → ALIAS_LOOP on cycle
-  5. If COLLECTION → auto-generate child list (recent, max 100)
-  6. Increment hit_count
-  7. Return record with status OK
-}
+```
+resolve(path) →
+  1. Lookup record by exact path
+  2. Not found → return { status: 'NXDOMAIN' }
+  3. TTL expired → return { status: 'STALE' }
+  4. ALIAS → follow redirect chain (max 5 hops, detect loops → 'ALIAS_LOOP')
+  5. Namespace query (no exact match) → auto-generate COLLECTION of children
+  6. Increment hit_count, update last_hit
+  7. Return { status: 'OK', record }
 ```
 
-#### Auto-COLLECTION
-
-If you resolve `projects/orpheus` and it doesn't exist as a record, but `projects/orpheus/*` records exist, Blink auto-generates a COLLECTION record listing all children.
-
-**Example**:
-```typescript
-blink.resolve('projects/orpheus')
-// Returns COLLECTION with content = [{ path: 'projects/orpheus/readme', title: 'README', ... }]
-```
+**Auto-COLLECTION**: Resolving `projects/orpheus` when it doesn't exist as a record but `projects/orpheus/*` records exist → auto-generates a COLLECTION listing all children (recent, max 100).
 
 ---
 
 ### 3. Query Engine (`src/query-executor.ts` + `src/grammar/query.peggy`)
 
-SQL-like DSL for filtering records.
+SQL-like DSL parsed by Peggy PEG grammar.
 
-#### Grammar (PEG)
-
-```peggy
-Query = _ resource:Resource clauses:Clause* _
-
-Resource = $([a-zA-Z_][a-zA-Z0-9_/]*)  // Supports slashes: projects/orpheus
-
-Clause = Where / OrderBy / Limit / Since
-
-Where   = "where" _ field:Identifier _ op:Op _ value:(String/Number)
-OrderBy = "order by" _ field:Identifier _ direction:("asc"/"desc")
-Limit   = "limit" _ n:Number
-Since   = "since" _ date:ISODate
+```
+Query    = Resource Clause*
+Resource = [a-zA-Z_][a-zA-Z0-9_/]*     -- supports slashes: projects/orpheus
+Clause   = Where | OrderBy | Limit | Since
+Where    = "where" field op value
+OrderBy  = "order by" field ("asc" | "desc")
+Limit    = "limit" number
+Since    = "since" ISO-date
 ```
 
-#### Query Examples
+**Operators**: `=`, `!=`, `>`, `<`, `>=`, `<=`, `contains`
 
 ```typescript
 blink.query('projects where type = "SUMMARY" order by hit_count desc limit 5')
 blink.query('me/tasks where tags contains "urgent" since 2026-02-01')
 ```
 
-Queries are parsed to AST, then converted to SQLite WHERE clauses.
-
 ---
 
 ### 4. Ingestion Pipeline (`src/ingest.ts`)
 
-Bridges document loaders (LlamaIndex) to Blink records.
+Callback-first architecture for transforming documents from any source into Blink records.
 
-#### Flow
+#### Derivation Architecture
+
+Every data source needs 4 derivation functions:
+
+| Callback | Signature | Purpose |
+|----------|-----------|---------|
+| `deriveNamespace` | `(metadata) → string` | Path namespace (e.g., `public/articles`) |
+| `deriveTitle` | `(metadata) → string` | Record title (e.g., article title) |
+| `deriveTags` | `(metadata, extraTags?) → string[]` | Tags for search |
+| `buildSources` | `(metadata) → Source[]` | Origin references |
+
+#### Preset Deriver Sets
+
+| Preset | Source Type | Namespace Pattern | Source.type |
+|--------|-----------|-------------------|-------------|
+| `FILESYSTEM_DERIVERS` | Local files | `dirname(file_path)` | `file` |
+| `POSTGRES_DERIVERS` | PostgreSQL rows | `schema/table` | `database` |
+| `WEB_DERIVERS` | Web pages | `web/hostname` | `web` |
+| `GIT_DERIVERS` | Git repo files | `git/repo-name` | `vcs` |
+
+Each deriver set exports both the combined preset object and individual functions for customization:
+
+```typescript
+// Use full preset
+await blink.ingest(docs, { ...POSTGRES_DERIVERS });
+
+// Mix and match
+await blink.ingest(docs, {
+  ...POSTGRES_DERIVERS,
+  deriveTitle: (meta) => `custom-${meta.row_id}`,  // override just title
+});
+```
+
+#### Ingestion Flow
 
 ```
-Directory → loadDirectory() → IngestDocument[] → processDocuments() → BlinkRecord[]
-                ↓                                        ↓
-         LlamaIndex Reader                    documentToSaveInput() × N
-         (or basic fs)                              ↓
-                                            blink.saveMany()
+IngestDocument[] → documentToSaveInput() for each:
+  1. resolveNamespace(metadata, options)     — custom deriver or filesystem default
+  2. deriveTitle(metadata)                   — custom deriver or filesystem default
+  3. summarize(text, metadata)               — custom or extractiveSummarize(500)
+  4. classify(text, metadata)                — custom or default SOURCE
+  5. deriveTags(metadata, extraTags)         — custom or filesystem default
+  6. buildSources(metadata)                  — custom or filesystem default
+→ SaveInput[] → blink.saveMany() → BlinkRecord[]
 ```
+
+**Concurrency**: Processes documents in batches of 5 (configurable via `options.concurrency`). Uses `Promise.allSettled` — errors are captured, not fatal.
 
 #### Key Functions
 
-**`loadDirectory(dirPath, options?)`**
-- Tries dynamic import of `@llamaindex/readers/directory`
-- Falls back to basic fs walker if LlamaIndex not installed
-- Returns `IngestDocument[]` with metadata
-
-**`documentToSaveInput(doc, options)`**
-- Derives `namespace` from `dirname(file_path)` (or custom logic)
-- Derives `title` from filename sans extension
-- Calls `options.summarize(text, metadata)` → summary
-- Calls `options.classify(text, metadata)` → RecordType (default: SOURCE)
-- Auto-generates tags from file extension + directory
-- Populates `sources: [{ type: 'file', file_path }]`
-
-**`processDocuments(blink, docs, options)`**
-- Maps each doc via `documentToSaveInput` with concurrency (default: 5)
-- Uses `Promise.allSettled` → errors captured, don't abort batch
-- Calls `blink.saveMany()` for atomic bulk insert
-- Returns `IngestResult` with records, errors, total, elapsed
-
-**`extractiveSummarize(maxLength?)`**
-- Default summarizer: first N chars truncated at word boundary
-- Used by CLI when no LLM available
-
-#### Optional Peer Dependencies
-
-```json
-"peerDependencies": {
-  "llamaindex": ">=0.12.0",
-  "@llamaindex/readers": ">=0.1.0"
-},
-"peerDependenciesMeta": {
-  "llamaindex": { "optional": true },
-  "@llamaindex/readers": { "optional": true }
-}
-```
-
-LlamaIndex only needed if users want full format support (PDF, DOCX, etc.). Basic loader handles text files.
+| Function | Description |
+|----------|-------------|
+| `processDocuments(blink, docs, options)` | Main pipeline: map → derive → save |
+| `documentToSaveInput(doc, options)` | Single document → SaveInput |
+| `loadDirectory(dirPath, options?)` | LlamaIndex or basic fs walker |
+| `extractiveSummarize(maxLength?)` | Default summarizer: first N chars at word boundary |
 
 ---
 
-### 5. Library API (`src/blink.ts`)
+### 5. Adapters (`src/adapters.ts`)
 
-Clean object-oriented interface wrapping all layers.
+Source-specific document loaders that produce `IngestDocument[]`.
+
+#### PostgreSQL Adapter
+
+**Classic** — full SQL control:
+```typescript
+const docs = await loadFromPostgres({
+  connectionString: 'postgresql://localhost/mydb',
+  query: 'SELECT * FROM articles WHERE published = true',
+  textColumn: 'body',
+  idColumn: 'id',
+  titleColumn: 'title',
+  table: 'articles',
+});
+```
+
+**Progressive** — table shorthand with auto-detection:
+```typescript
+const docs = await loadFromPostgresProgressive({
+  connectionString: 'postgresql://localhost/mydb',
+  table: 'articles',
+  batchSize: 100,
+  // textColumn, idColumn auto-detected via introspection
+  // where, maxRows, offset, onBatch optional
+});
+```
+
+**Introspection**:
+```typescript
+const meta = await introspectPostgresTable(connStr, 'articles', 'public');
+// → { columns: [...], primaryKey: 'id', rowCount: 5000, schema, database }
+
+const textCol = pickTextColumn(meta);
+// → auto-selects best text column (prefers 'text' type, then longest varchar)
+```
+
+**Security**: Connection strings are sanitized (passwords stripped) before storing in metadata.
+
+**Dependency**: `pg` is an optional peer dependency, dynamically imported at runtime.
+
+#### Web URL Adapter
+
+```typescript
+const docs = await loadFromUrls(
+  ['https://example.com/docs/api', 'https://example.com/docs/guide'],
+  { concurrency: 3, timeout: 10_000 }
+);
+```
+
+- Fetches pages concurrently in batches
+- HTML: strips `<script>`/`<style>`, extracts `<title>`, strips tags → plain text
+- Non-HTML: uses body as-is
+- Failed fetches are skipped with warning (not fatal)
+- Custom `extractText(html, url)` callback supported
+
+**Utilities exported**: `stripHtml(html)`, `parseUrl(url)`
+
+#### Git Repository Adapter
+
+```typescript
+const docs = await loadFromGit({
+  repoPath: '/path/to/repo',
+  ref: 'HEAD',
+  include: ['src/**/*.ts'],
+  exclude: ['node_modules/**', '.git/**', 'dist/**'],
+  maxFileSize: 100_000,
+});
+```
+
+- Uses `git ls-tree` + `git show` via child_process (zero npm dependencies)
+- Default excludes: `node_modules/**`, `.git/**`, `dist/**`, `*.lock`, `package-lock.json`
+- Default includes: 30+ text file extensions (`.ts`, `.js`, `.py`, `.md`, etc.)
+- NaN guard on file size parse
+- Produces metadata: `{ repo, ref, file_path, file_name, file_type, commit_sha }`
+
+---
+
+### 6. LLM Helpers (`src/llm.ts`)
+
+Factory functions that produce `SummarizeCallback` and `ClassifyCallback` using LLM APIs.
+
+```typescript
+import { llmSummarize, llmClassify } from 'blink-query';
+
+await blink.ingest(docs, {
+  summarize: llmSummarize({ apiKey: 'sk-...' }),
+  classify: llmClassify(),
+});
+```
+
+#### Configuration Resolution (priority order)
+
+1. Explicit config parameter (`{ apiKey, model, provider }`)
+2. Environment variables: `OPENAI_API_KEY`, `BLINK_LLM_MODEL`, `BLINK_LLM_PROVIDER`
+3. Defaults: `provider: 'openai'`, `model: 'gpt-5-mini-2025-08-07'`, `temperature: 0.3`
+
+#### Graceful Degradation
+
+- `llmSummarize()` falls back to `extractiveSummarize(500)` on API error
+- `llmClassify()` defaults to `'SOURCE'` on API error
+- Both log warnings to stderr
+
+---
+
+### 7. Library API (`src/blink.ts`)
+
+Public API wrapping all layers. This is the npm entry point.
 
 ```typescript
 class Blink {
@@ -219,47 +362,81 @@ class Blink {
   saveMany(inputs: SaveInput[]): BlinkRecord[]
   get(path: string): BlinkRecord | null
   delete(path: string): boolean
-  move(fromPath: string, toPath: string): BlinkRecord | null
+  move(from: string, to: string): BlinkRecord | null
 
-  // Resolution
+  // Resolution & Query
   resolve(path: string): ResolveResponse
-
-  // Query
-  search(keywords: string, namespace?: string, limit?: number): BlinkRecord[]
+  search(keywords: string, options?: { namespace?, limit? }): BlinkRecord[]
   list(namespace: string, sort?: 'recent' | 'hits' | 'title'): BlinkRecord[]
   query(queryString: string): BlinkRecord[]
   zones(): Zone[]
+  pathFor(namespace: string, title: string): string
 
-  // Ingestion
+  // Ingestion — Generic
   async ingest(docs: IngestDocument[], options: IngestOptions): Promise<IngestResult>
-  async ingestDirectory(dirPath: string, options: IngestOptions, loadOptions?): Promise<IngestResult>
+  async ingestDirectory(dirPath, options, loadOptions?): Promise<IngestResult>
 
-  // Lifecycle
+  // Ingestion — PostgreSQL
+  async ingestFromPostgres(config: PostgresLoadConfig, options: IngestOptions): Promise<IngestResult>
+  async ingestFromPostgresProgressive(
+    config: PostgresProgressiveConfig,
+    options?: IngestOptions,    // optional — auto-applies POSTGRES_DERIVERS + extractiveSummarize
+  ): Promise<IngestResult & { introspection: PostgresIntrospection }>
+
+  // Ingestion — Web & Git
+  async ingestFromUrls(urls, options, loadOptions?): Promise<IngestResult>
+  async ingestFromGit(config: GitLoadConfig, options: IngestOptions): Promise<IngestResult>
+
   close(): void
 }
 ```
 
-**Type Exports**:
+**Progressive DX**: `ingestFromPostgresProgressive` with no options auto-applies `POSTGRES_DERIVERS` + `extractiveSummarize(500)`, enabling minimal usage:
+
 ```typescript
+// 3-field ingestion — everything else auto-detected
+await blink.ingestFromPostgresProgressive({
+  connectionString: 'postgresql://localhost/mydb',
+  table: 'articles',
+  batchSize: 100,
+});
+```
+
+#### Exports
+
+```typescript
+// Types
 export type {
   BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source,
   QueryAST, QueryCondition,
-  IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback
+  IngestDocument, IngestOptions, IngestResult,
+  SummarizeCallback, ClassifyCallback,
+  DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
+  PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo,
+  PostgresBatchCallback,
+  WebLoadConfig, GitLoadConfig, LLMConfig,
 }
-```
 
-**Helper Exports**:
-```typescript
+// Derivers
+export {
+  FILESYSTEM_DERIVERS, filesystemNamespace, filesystemTitle, filesystemTags, filesystemSources,
+  POSTGRES_DERIVERS,   postgresNamespace,   postgresTitle,   postgresTags,   postgresSources,
+  WEB_DERIVERS,        webNamespace,        webTitle,        webTags,        webSources,
+  GIT_DERIVERS,        gitNamespace,        gitTitle,        gitTags,        gitSources,
+}
+
+// Adapters & Utilities
+export { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit }
+export { introspectPostgresTable, pickTextColumn, stripHtml, parseUrl }
 export { loadDirectory, extractiveSummarize }
+export { llmSummarize, llmClassify }
 ```
 
 ---
 
-### 6. CLI (`src/index.ts`)
+### 8. CLI (`src/index.ts`)
 
 Commander-based CLI with 10 commands.
-
-#### Commands
 
 | Command | Description |
 |---------|-------------|
@@ -274,26 +451,11 @@ Commander-based CLI with 10 commands.
 | `ingest <directory>` | Ingest files from directory |
 | `serve` | Start MCP server (stdio) |
 
-#### Ingest Command
-
-```bash
-blink ingest ./my-docs \
-  --ns knowledge \
-  --prefix v1 \
-  --summary-length 500 \
-  --tags "project,docs" \
-  --recursive
-```
-
-Uses `extractiveSummarize()` by default (no LLM required).
-
 ---
 
-### 7. MCP Server (`src/mcp.ts`)
+### 9. MCP Server (`src/mcp.ts`)
 
-Model Context Protocol server for AI agent integration.
-
-#### 5 Tools
+Model Context Protocol server for AI agent integration via stdio transport.
 
 | Tool | Description |
 |------|-------------|
@@ -303,79 +465,88 @@ Model Context Protocol server for AI agent integration.
 | `blink_list` | List namespace |
 | `blink_query` | Execute query DSL |
 
-**Transport**: stdio (local process communication)
-
-**Usage**:
-```bash
-blink serve
-# AI agent connects via stdio MCP client
-```
-
 ---
 
-## The 5 Record Types
+## Source Type System
 
-### 1. SUMMARY
-**Consumption**: Read directly, no fetching needed
-**Use Case**: Key takeaways, executive summaries, TL;DRs
-**Example**: "Project roadmap Q1 2026 highlights"
+The `Source` interface tracks where knowledge originated:
 
-### 2. META
-**Consumption**: Configuration, structured metadata
-**Use Case**: Settings, status, counts, references
-**Example**: `{ status: "active", contributors: 12, last_deploy: "2026-02-10" }`
-
-### 3. COLLECTION
-**Consumption**: List of child records (auto-generated or manual)
-**Use Case**: Table of contents, directory listings
-**Example**: All docs in `projects/orpheus/*`
-
-### 4. SOURCE
-**Consumption**: Summary + pointer to full content
-**Use Case**: Large documents, external APIs, files
-**Example**: 50KB markdown file → 500 char summary + `{ file_path: "docs/api.md" }`
-
-### 5. ALIAS
-**Consumption**: Redirect to another path
-**Use Case**: Shortcuts, deprecation, renaming
-**Example**: `me/todo` → `tasks/personal/active`
+```typescript
+interface Source {
+  type: 'web' | 'file' | 'database' | 'api' | 'vcs' | string;
+  url?: string;              // web sources
+  file_path?: string;        // file sources
+  connection_string?: string; // database sources (sanitized, no passwords)
+  table?: string;            // database sources
+  query?: string;            // database sources
+  endpoint?: string;         // API sources
+  method?: string;           // API sources
+  repo?: string;             // VCS sources
+  ref?: string;              // VCS sources
+  last_fetched?: string;     // timestamp
+  [key: string]: unknown;    // extensible
+}
+```
 
 ---
 
 ## Data Flow Examples
 
-### Example 1: Ingest Directory
+### Example 1: PostgreSQL → Blink (Progressive, Zero-Config)
 
 ```typescript
 const blink = new Blink();
 
-// Ingest project docs
-const result = await blink.ingestDirectory('./docs', {
-  summarize: extractiveSummarize(500),
-  namespacePrefix: 'knowledge',
-  tags: ['v1', 'docs']
+// Auto-detects PK, text column, title column, metadata — no SQL needed
+const result = await blink.ingestFromPostgresProgressive({
+  connectionString: 'postgresql://localhost/mydb',
+  table: 'articles',
+  batchSize: 100,
 });
 
-console.log(`Ingested ${result.records.length} records`);
-// Creates: knowledge/readme, knowledge/api/auth, knowledge/api/users, etc.
+console.log(result.introspection.primaryKey);   // 'id'
+console.log(result.introspection.columns);      // full column metadata
+console.log(result.records.length);             // ingested count
 ```
 
-### Example 2: Agent Resolution
+### Example 2: Web Scraping → Blink
 
 ```typescript
-// Agent asks: "What's in the orpheus project?"
+const blink = new Blink();
+
+const result = await blink.ingestFromUrls(
+  ['https://docs.example.com/api', 'https://docs.example.com/guide'],
+  { ...WEB_DERIVERS, summarize: llmSummarize() },
+);
+// Records: web/docs-example-com/api, web/docs-example-com/guide
+```
+
+### Example 3: Git Repo → Blink
+
+```typescript
+const blink = new Blink();
+
+const result = await blink.ingestFromGit(
+  { repoPath: '/path/to/repo', include: ['src/**/*.ts'] },
+  { ...GIT_DERIVERS },
+);
+// Records: git/repo-name/src/index, git/repo-name/src/utils, ...
+```
+
+### Example 4: Agent Resolution
+
+```typescript
 const response = blink.resolve('projects/orpheus');
 
 if (response.status === 'OK' && response.record.type === 'COLLECTION') {
-  const children = response.record.content as Array<{ path: string, title: string }>;
+  const children = response.record.content;
   // Agent sees list of all documents in projects/orpheus/*
 }
 ```
 
-### Example 3: Query DSL
+### Example 5: Query DSL
 
 ```typescript
-// Find urgent tasks created this week
 const tasks = blink.query(
   'tasks/personal where tags contains "urgent" since 2026-02-10 order by created_at desc'
 );
@@ -392,9 +563,9 @@ Two entry points:
 1. **Library** (`src/blink.ts`) → `dist/blink.js` + `dist/blink.d.ts`
 2. **CLI** (`src/index.ts`) → `dist/index.js` (with shebang)
 
-**Externals**: `better-sqlite3`, `llamaindex`, `@llamaindex/readers`
+**Externals**: `better-sqlite3`, `llamaindex`, `@llamaindex/readers`, `pg`
 
-### Package Exports (`package.json`)
+### Package Exports
 
 ```json
 {
@@ -408,103 +579,81 @@ Two entry points:
 }
 ```
 
-### Installation
+### Dependencies
 
-```bash
-npm install blink-query
-
-# Optional: for full format support
-npm install llamaindex @llamaindex/readers
-```
+| Package | Type | Purpose |
+|---------|------|---------|
+| `better-sqlite3` | dependency | SQLite engine |
+| `commander` | dependency | CLI framework |
+| `@modelcontextprotocol/sdk` | dependency | MCP server |
+| `llamaindex` | optional peer | Full format document loading |
+| `@llamaindex/readers` | optional peer | Directory reader |
+| `pg` | optional peer | PostgreSQL adapter |
 
 ---
 
 ## Testing
 
-**66 tests** across 6 test suites using Vitest:
+**214 tests** across 12 test suites using Vitest:
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
-| `store.test.ts` | 17 | CRUD, transactions, keywords, zones |
-| `resolver.test.ts` | 7 | Resolution, ALIAS, auto-COLLECTION, TTL |
+| `store.test.ts` | 21 | CRUD, transactions, keywords, zones, slug |
+| `resolver.test.ts` | 8 | Resolution, ALIAS, auto-COLLECTION, TTL |
 | `query-parser.test.ts` | 13 | PEG grammar, slashed namespaces |
-| `query-executor.test.ts` | 8 | WHERE, ORDER BY, LIMIT, SINCE |
-| `ingest.test.ts` | 16 | Document mapping, summarizer, batch processing |
-| `ingest-integration.test.ts` | 5 | Real file loading, fallback loader |
+| `query-executor.test.ts` | 9 | WHERE, ORDER BY, LIMIT, SINCE |
+| `ingest.test.ts` | 17 | Document mapping, summarizer, batch processing |
+| `ingest-integration.test.ts` | 6 | Real file loading, fallback loader |
+| `derivers.test.ts` | 54 | All 4 deriver sets (filesystem, postgres, web, git) |
+| `adapters.test.ts` | 32 | PostgreSQL, web, git adapters + introspection |
+| `llm.test.ts` | 17 | LLM summarizer/classifier, env config, fallbacks |
+| `postgres.integration.test.ts` | 19 | Real PostgreSQL (introspection, progressive, classic) |
+| `web.integration.test.ts` | 9 | Real HTTP server, HTML/JSON, timeouts |
+| `git.integration.test.ts` | 9 | Real git repo, refs, file filtering |
 
-**Run tests**: `npm test`
+```bash
+npm test              # Unit tests only (177)
+npm run test:integration  # Integration tests only (37)
+npm run test:all      # All tests (214)
+```
 
 ---
 
 ## Key Design Decisions
 
 ### 1. Why SQLite?
-- Embedded, zero-config
-- ACID transactions for atomicity
-- Fast keyword indexing
-- Portable single file
+Embedded, zero-config, ACID transactions, portable single file. No server to manage.
 
-### 2. Why better-sqlite3 over bun:sqlite?
-- Node.js ecosystem compatibility
-- Synchronous API (simpler transaction handling)
-- Production-ready, battle-tested
+### 2. Why better-sqlite3?
+Node.js ecosystem compatibility. Synchronous API for simpler transaction handling. Production-tested.
 
-### 3. Why optional LlamaIndex?
-- Users without PDF/DOCX needs shouldn't install heavy deps
-- Basic text loader covers 80% use cases
-- Dynamic import + fallback = graceful degradation
+### 3. Why callback-first derivation?
+Different data sources need different logic for namespace, title, tags, and sources. Preset deriver sets provide good defaults; individual callbacks allow surgical customization without forking.
 
-### 4. Why DNS-inspired?
-- Hierarchical namespaces (projects/orpheus/readme)
-- Familiar mental model (like file paths)
-- ALIAS redirects (like symlinks or DNS CNAME)
-- TTL/freshness semantics
+### 4. Why 5 types only?
+Type = consumption instruction, not domain type. Prevents type explosion. Forces clarity: "how should the agent consume this?" not "what is this about?"
 
-### 5. Why 5 types only?
-- Type carries consumption instruction, not domain
-- Content carries domain semantics (task, doc, config)
-- Prevents type explosion (no TASK, DOC, CONFIG types)
-- Forces clarity: "How should agent consume this?"
+### 5. Why DNS-inspired?
+Hierarchical namespaces, ALIAS redirects, TTL freshness, zones. Familiar mental model for developers.
+
+### 6. Why optional peer dependencies?
+Users without PDF/PostgreSQL/etc needs shouldn't install heavy deps. Dynamic import + fallback = graceful degradation.
+
+### 7. Why progressive PostgreSQL?
+The classic adapter requires raw SQL + 7 config fields. Progressive disclosure: Level 1 (3 fields, auto-detect everything), Level 2 (where/maxRows/offset), Level 3 (full SQL). Schema introspection via `information_schema` enables auto-detection.
 
 ---
 
 ## Performance Characteristics
 
-### Bulk Ingestion
-- **Without transaction**: 50K records = 8-13 minutes
-- **With transaction** (`saveMany`): 50K records = 2-8 seconds
-- **95% speedup** from atomic batch writes
-
-### Resolution
-- Direct path lookup: ~1ms (indexed)
-- Auto-COLLECTION: ~5-10ms (namespace scan + list)
-- ALIAS chain (3 hops): ~3ms
-
-### Search
-- Keyword search (3 terms): ~10-20ms (keyword table indexed)
-- Query DSL: ~15-30ms (SQLite WHERE clauses)
-
----
-
-## Future Considerations
-
-### Potential Enhancements
-
-1. **Vector embeddings** — Store embeddings in `content`, add similarity search
-2. **Remote sync** — Push/pull to cloud storage or shared DB
-3. **Watch mode** — Auto-reingest on file changes
-4. **Conflict resolution** — Multi-writer CRDT semantics
-5. **Compression** — LZ4/Zstd for large content fields
-6. **Streaming ingest** — Process 100K+ files without memory spike
-
-### Non-Goals
-
-- **Not a vector database** — Use Pinecone/Weaviate if vectors are primary
-- **Not a document store** — Use MongoDB if complex queries needed
-- **Not a full-text engine** — Use Elasticsearch if advanced search required
-- **Not a graph database** — Use Neo4j if relationship queries needed
-
-Blink is a **resolution layer** — lightweight, fast, focused.
+| Operation | Time |
+|-----------|------|
+| Bulk save (50K records, transaction) | 2-8 seconds |
+| Direct path lookup | ~1ms |
+| Auto-COLLECTION | ~5-10ms |
+| ALIAS chain (3 hops) | ~3ms |
+| Keyword search (3 terms) | ~10-20ms |
+| Query DSL | ~15-30ms |
 
 ---
 
@@ -512,10 +661,48 @@ Blink is a **resolution layer** — lightweight, fast, focused.
 
 1. **Type = Consumption Instruction** — Separates "how to use" from "what it is"
 2. **Transactions = Atomicity** — All writes wrapped for consistency
-3. **Optional Deps = Flexibility** — Works with or without LlamaIndex
-4. **DNS Semantics = Familiarity** — Paths, aliases, TTL, zones
-5. **Callback Pattern = Extensibility** — Developer brings summarizer/classifier
+3. **Callbacks = Extensibility** — Developer brings summarizer, classifier, derivers
+4. **Preset Derivers = DX** — Sensible defaults per source type, override surgically
+5. **Optional Deps = Flexibility** — Works with or without LlamaIndex, pg, etc.
+6. **DNS Semantics = Familiarity** — Paths, aliases, TTL, zones
+7. **Progressive Disclosure** — Simple things simple, complex things possible
 
 ---
 
-**Questions?** See `/test-agent/` for usage examples with Anthropic SDK.
+## File Map
+
+```
+src/
+├── blink.ts            # Public API (Blink class), npm entry point
+├── store.ts            # SQLite CRUD, zones, keyword indexing, transactions
+├── resolver.ts         # Path resolution, ALIAS chains, auto-COLLECTION
+├── query-executor.ts   # Peggy DSL → SQLite WHERE queries
+├── ingest.ts           # Derivers, document mapping, batch processing
+├── adapters.ts         # PostgreSQL, Web, Git loaders + introspection
+├── llm.ts              # LLM summarizer/classifier factories
+├── mcp.ts              # MCP server (5 tools, stdio transport)
+├── index.ts            # CLI (commander, 10 commands)
+├── types.ts            # All TypeScript interfaces and type definitions
+└── grammar/
+    └── query.peggy     # PEG grammar for query DSL
+
+tests/
+├── store.test.ts
+├── resolver.test.ts
+├── query-parser.test.ts
+├── query-executor.test.ts
+├── ingest.test.ts
+├── ingest-integration.test.ts
+├── derivers.test.ts
+├── adapters.test.ts
+├── llm.test.ts
+└── integration/
+    ├── postgres.integration.test.ts
+    ├── web.integration.test.ts
+    └── git.integration.test.ts
+
+test-agent/             # Standalone demo scripts (Anthropic SDK + MCP)
+├── postgres-test.ts
+├── web-test.ts
+└── git-test.ts
+```

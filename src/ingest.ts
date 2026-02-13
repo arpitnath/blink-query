@@ -8,31 +8,31 @@ import type {
   RecordType,
   Source,
   SummarizeCallback,
+  DeriveNamespaceCallback,
+  DeriveTitleCallback,
+  DeriveTagsCallback,
+  BuildSourcesCallback,
 } from './types.js';
 
-// ─── Namespace / title / tag derivation ─────────────────────
+// ─── Filesystem derivers (default for file-based ingestion) ─
 
-function deriveNamespace(
+export function filesystemNamespace(
   metadata: Record<string, unknown>,
-  options: IngestOptions,
 ): string {
-  if (typeof options.namespace === 'string') return options.namespace;
-  if (typeof options.namespace === 'function') return options.namespace(metadata);
-
   const filePath = (metadata.file_path as string) || 'unknown';
   const dir = dirname(filePath).replace(/^\.?\/?/, '').replace(/\\/g, '/');
-  const ns = dir || 'ingested';
-
-  return options.namespacePrefix ? `${options.namespacePrefix}/${ns}` : ns;
+  return dir || 'ingested';
 }
 
-function deriveTitle(metadata: Record<string, unknown>): string {
+export function filesystemTitle(
+  metadata: Record<string, unknown>,
+): string {
   const fileName = (metadata.file_name as string) || 'untitled';
   const ext = extname(fileName);
   return ext ? fileName.slice(0, -ext.length) : fileName;
 }
 
-function deriveTags(
+export function filesystemTags(
   metadata: Record<string, unknown>,
   extraTags?: string[],
 ): string[] {
@@ -59,6 +59,41 @@ function deriveTags(
   return [...new Set(tags.map(t => t.toLowerCase()))];
 }
 
+export function filesystemSources(
+  metadata: Record<string, unknown>,
+): Source[] {
+  const filePath = (metadata.file_path as string) || undefined;
+  return filePath
+    ? [{ type: 'file', file_path: filePath, last_fetched: new Date().toISOString() }]
+    : [];
+}
+
+/** Preset derivers for filesystem-based ingestion (the default). */
+export const FILESYSTEM_DERIVERS = {
+  deriveNamespace: filesystemNamespace,
+  deriveTitle: filesystemTitle,
+  deriveTags: filesystemTags,
+  buildSources: filesystemSources,
+} as const;
+
+// ─── Resolve namespace with prefix/override ─────────────────
+
+function resolveNamespace(
+  metadata: Record<string, unknown>,
+  options: IngestOptions,
+): string {
+  // Explicit string namespace overrides everything
+  if (typeof options.namespace === 'string') return options.namespace;
+  // Legacy function form
+  if (typeof options.namespace === 'function') return options.namespace(metadata);
+
+  // Use custom deriver or filesystem default
+  const deriver = options.deriveNamespace || filesystemNamespace;
+  const ns = deriver(metadata);
+
+  return options.namespacePrefix ? `${options.namespacePrefix}/${ns}` : ns;
+}
+
 // ─── Document → SaveInput mapping ───────────────────────────
 
 export async function documentToSaveInput(
@@ -71,21 +106,20 @@ export async function documentToSaveInput(
     ? await options.classify(doc.text, doc.metadata)
     : 'SOURCE';
 
-  const namespace = deriveNamespace(doc.metadata, options);
-  const title = deriveTitle(doc.metadata);
-  const tags = deriveTags(doc.metadata, options.tags);
-
-  const filePath = (doc.metadata.file_path as string) || undefined;
-  const sources: Source[] = filePath
-    ? [{ type: 'file', file_path: filePath, last_fetched: new Date().toISOString() }]
-    : [];
+  const namespace = resolveNamespace(doc.metadata, options);
+  const titleDeriver = options.deriveTitle || filesystemTitle;
+  const title = titleDeriver(doc.metadata);
+  const tagDeriver = options.deriveTags || filesystemTags;
+  const tags = tagDeriver(doc.metadata, options.tags);
+  const sourceBuilder = options.buildSources || filesystemSources;
+  const sources = sourceBuilder(doc.metadata);
 
   return {
     namespace,
     title,
     type,
     summary,
-    content: type === 'SOURCE' ? { original_id: doc.id, file_metadata: doc.metadata } : undefined,
+    content: type === 'SOURCE' ? { original_id: doc.id, source_metadata: doc.metadata } : undefined,
     tags,
     ttl: options.ttl,
     sources,

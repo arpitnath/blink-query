@@ -22,10 +22,22 @@ export interface BlinkRecord {
 }
 
 export interface Source {
-  type: 'web' | 'file' | 'manual';
+  type: 'web' | 'file' | 'database' | 'api' | 'vcs' | string;
   url?: string;
   file_path?: string;
   last_fetched?: string;
+  /** Database connection/table info */
+  connection_string?: string;
+  table?: string;
+  query?: string;
+  /** API endpoint info */
+  endpoint?: string;
+  method?: string;
+  /** VCS info */
+  repo?: string;
+  ref?: string;
+  /** Arbitrary source-specific metadata */
+  [key: string]: unknown;
 }
 
 // Zone (SOA equivalent)
@@ -92,6 +104,27 @@ export type ClassifyCallback = (
   metadata: Record<string, unknown>,
 ) => RecordType | Promise<RecordType>;
 
+/** Callback to derive a namespace from document metadata. */
+export type DeriveNamespaceCallback = (
+  metadata: Record<string, unknown>,
+) => string;
+
+/** Callback to derive a title from document metadata. */
+export type DeriveTitleCallback = (
+  metadata: Record<string, unknown>,
+) => string;
+
+/** Callback to derive tags from document metadata and extra user tags. */
+export type DeriveTagsCallback = (
+  metadata: Record<string, unknown>,
+  extraTags?: string[],
+) => string[];
+
+/** Callback to build source references from document metadata. */
+export type BuildSourcesCallback = (
+  metadata: Record<string, unknown>,
+) => Source[];
+
 /** Options for blink.ingest() */
 export interface IngestOptions {
   /** Optional: produces a summary string from document text (defaults to extractive summarizer) */
@@ -108,6 +141,16 @@ export interface IngestOptions {
   tags?: string[];
   /** Optional: concurrency for async summarize/classify calls (default: 5) */
   concurrency?: number;
+  /** Optional: source type label (e.g., 'file', 'database', 'api', 'web') */
+  sourceType?: string;
+  /** Optional: custom namespace derivation callback */
+  deriveNamespace?: DeriveNamespaceCallback;
+  /** Optional: custom title derivation callback */
+  deriveTitle?: DeriveTitleCallback;
+  /** Optional: custom tag derivation callback */
+  deriveTags?: DeriveTagsCallback;
+  /** Optional: custom source reference builder callback */
+  buildSources?: BuildSourcesCallback;
 }
 
 /** Result of an ingest operation */

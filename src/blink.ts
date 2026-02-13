@@ -97,7 +97,14 @@ export class Blink {
 export type {
   BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
   IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback,
+  DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
 } from './types.js';
 
 // Re-export ingestion helpers
 export { loadDirectory, extractiveSummarize } from './ingest.js';
+
+// Re-export preset derivers
+export {
+  FILESYSTEM_DERIVERS,
+  filesystemNamespace, filesystemTitle, filesystemTags, filesystemSources,
+} from './ingest.js';

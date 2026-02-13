@@ -7,7 +7,7 @@
  * Env override: TEST_POSTGRES_URL=postgresql://user:pass@host:port/db
  */
 
-import { Blink, POSTGRES_DERIVERS, loadFromPostgres, extractiveSummarize } from '../src/blink.js';
+import { Blink, POSTGRES_DERIVERS, loadFromPostgres, loadFromPostgresProgressive, introspectPostgresTable, extractiveSummarize } from '../src/blink.js';
 import pg from 'pg';
 
 const PG_URL = process.env.TEST_POSTGRES_URL || 'postgresql://localhost:5432/postgres';
@@ -121,7 +121,7 @@ async function main() {
       console.log(`  ${r.path} — ${r.summary?.slice(0, 80)}...`);
     }
 
-    // 7. Summary
+    // 7. Summary of classic pipeline
     console.log('\n========================================');
     console.log('PostgreSQL → Blink pipeline: SUCCESS');
     console.log(`  Documents loaded: ${docs.length}`);
@@ -131,6 +131,91 @@ async function main() {
     console.log('========================================');
 
     blink.close();
+
+    // ─── Progressive loading demo ─────────────────────────────
+
+    console.log('\n\n══════════════════════════════════════════');
+    console.log('  PROGRESSIVE LOADING DEMO');
+    console.log('══════════════════════════════════════════');
+
+    // 8. Introspect the table
+    console.log('\n--- Step 8: Introspect table ---');
+    const introspection = await introspectPostgresTable(testDbUrl(), TEST_TABLE, 'public');
+    console.log(`  Table: ${introspection.schema}.${introspection.table}`);
+    console.log(`  Database: ${introspection.database}`);
+    console.log(`  Primary key: ${introspection.primaryKey}`);
+    console.log(`  Row count: ${introspection.rowCount}`);
+    console.log(`  Columns (${introspection.columns.length}):`);
+    for (const col of introspection.columns) {
+      const nullStr = col.nullable ? 'NULL' : 'NOT NULL';
+      const lenStr = col.maxLength != null ? `(${col.maxLength})` : '';
+      console.log(`    ${col.ordinalPosition}. ${col.name} — ${col.dataType}${lenStr} ${nullStr}`);
+    }
+
+    // 9. Progressive batch loading with logging
+    console.log('\n--- Step 9: Progressive batch loading (batchSize=2) ---');
+    const batchLog: string[] = [];
+    const progressiveDocs = await loadFromPostgresProgressive({
+      connectionString: testDbUrl(),
+      table: TEST_TABLE,
+      textColumn: 'content',
+      titleColumn: 'title',
+      batchSize: 2,
+      orderBy: 'id',
+      onBatch: (batchDocs, batchIndex, totalLoaded) => {
+        const msg = `  Batch ${batchIndex}: ${batchDocs.length} docs (total loaded: ${totalLoaded})`;
+        console.log(msg);
+        batchLog.push(msg);
+        for (const doc of batchDocs) {
+          console.log(`    [${doc.id}] ${(doc.metadata.title as string) || doc.text.slice(0, 40)}...`);
+        }
+      },
+    });
+    console.log(`  Total progressive docs: ${progressiveDocs.length}`);
+    console.log(`  Batches processed: ${batchLog.length}`);
+
+    // 10. Smart progressive ingest (auto-detection)
+    console.log('\n--- Step 10: Smart progressive ingest (auto-detection) ---');
+    const blink2 = new Blink({ dbPath: ':memory:' });
+
+    const progressiveResult = await blink2.ingestFromPostgresProgressive(
+      {
+        connectionString: testDbUrl(),
+        table: TEST_TABLE,
+        batchSize: 3,
+        titleColumn: 'title',
+        // textColumn and idColumn omitted — auto-detected!
+      },
+      {
+        ...POSTGRES_DERIVERS,
+        summarize: extractiveSummarize(200),
+      },
+    );
+
+    console.log(`  Introspection detected:`);
+    console.log(`    Text column: auto-detected (primary key: ${progressiveResult.introspection.primaryKey})`);
+    console.log(`    Columns: ${progressiveResult.introspection.columns.map(c => c.name).join(', ')}`);
+    console.log(`  Records ingested: ${progressiveResult.records.length}`);
+    console.log(`  Errors: ${progressiveResult.errors.length}`);
+    console.log(`  Elapsed: ${progressiveResult.elapsed}ms`);
+
+    // Verify resolution works
+    const path2 = `public/${TEST_TABLE}/introduction-to-postgresql`;
+    const resolved2 = blink2.resolve(path2);
+    console.log(`\n  Resolve "${path2}": ${resolved2.status}`);
+    if (resolved2.record) {
+      console.log(`    Title: ${resolved2.record.title}`);
+      console.log(`    Tags: ${resolved2.record.tags.join(', ')}`);
+    }
+
+    console.log('\n========================================');
+    console.log('Progressive PostgreSQL pipeline: SUCCESS');
+    console.log(`  Table introspected: ${introspection.table} (${introspection.columns.length} columns)`);
+    console.log(`  Progressive docs loaded: ${progressiveDocs.length}`);
+    console.log(`  Smart-ingested records:  ${progressiveResult.records.length}`);
+    console.log('========================================');
+
+    blink2.close();
   } finally {
     await cleanup();
   }

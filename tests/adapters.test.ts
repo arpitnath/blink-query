@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { stripHtml, parseUrl, loadFromPostgres, loadFromUrls } from '../src/adapters.js';
-import type { PostgresLoadConfig, WebLoadConfig } from '../src/types.js';
+import { stripHtml, parseUrl, loadFromPostgres, loadFromUrls, pickTextColumn } from '../src/adapters.js';
+import type { PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo, WebLoadConfig } from '../src/types.js';
 
 // ─── stripHtml ───────────────────────────────────────────────
 
@@ -239,5 +239,130 @@ describe('adapter type interfaces', () => {
     };
     expect(config.concurrency).toBeUndefined();
     expect(config.timeout).toBeUndefined();
+  });
+
+  it('PostgresProgressiveConfig compiles with all fields', () => {
+    const config: PostgresProgressiveConfig = {
+      connectionString: 'postgresql://user:pass@localhost:5432/db',
+      table: 'articles',
+      schema: 'public',
+      textColumn: 'content',
+      idColumn: 'id',
+      titleColumn: 'title',
+      metadataColumns: ['author', 'created_at'],
+      batchSize: 100,
+      orderBy: 'id',
+      orderDirection: 'asc',
+      offset: 0,
+      maxRows: 1000,
+      where: 'status = true',
+      onBatch: (docs, idx, total) => {
+        // callback signature check
+      },
+    };
+    expect(config.connectionString).toBeTruthy();
+    expect(config.batchSize).toBe(100);
+    expect(config.orderDirection).toBe('asc');
+  });
+
+  it('PostgresProgressiveConfig compiles with minimal fields', () => {
+    const config: PostgresProgressiveConfig = {
+      connectionString: 'postgresql://localhost/db',
+      table: 'docs',
+      batchSize: 50,
+    };
+    expect(config.textColumn).toBeUndefined();
+    expect(config.idColumn).toBeUndefined();
+    expect(config.orderBy).toBeUndefined();
+    expect(config.maxRows).toBeUndefined();
+    expect(config.onBatch).toBeUndefined();
+  });
+
+  it('PostgresIntrospection type shape validates', () => {
+    const introspection: PostgresIntrospection = {
+      table: 'articles',
+      schema: 'public',
+      database: 'mydb',
+      columns: [
+        { name: 'id', dataType: 'integer', nullable: false, maxLength: null, ordinalPosition: 1 },
+        { name: 'content', dataType: 'text', nullable: true, maxLength: null, ordinalPosition: 2 },
+        { name: 'title', dataType: 'character varying', nullable: false, maxLength: 255, ordinalPosition: 3 },
+      ],
+      primaryKey: 'id',
+      rowCount: 42,
+    };
+    expect(introspection.columns).toHaveLength(3);
+    expect(introspection.primaryKey).toBe('id');
+    expect(introspection.rowCount).toBe(42);
+  });
+
+  it('PostgresColumnInfo type shape validates', () => {
+    const col: PostgresColumnInfo = {
+      name: 'description',
+      dataType: 'text',
+      nullable: true,
+      maxLength: null,
+      ordinalPosition: 4,
+    };
+    expect(col.name).toBe('description');
+    expect(col.nullable).toBe(true);
+  });
+});
+
+// ─── pickTextColumn ──────────────────────────────────────────
+
+describe('pickTextColumn', () => {
+  function makeIntrospection(columns: PostgresColumnInfo[]): PostgresIntrospection {
+    return {
+      table: 'test',
+      schema: 'public',
+      database: 'testdb',
+      columns,
+      primaryKey: 'id',
+      rowCount: 10,
+    };
+  }
+
+  it('prefers text type over varchar', () => {
+    const result = pickTextColumn(makeIntrospection([
+      { name: 'id', dataType: 'integer', nullable: false, maxLength: null, ordinalPosition: 1 },
+      { name: 'short_name', dataType: 'character varying', nullable: false, maxLength: 50, ordinalPosition: 2 },
+      { name: 'body', dataType: 'text', nullable: true, maxLength: null, ordinalPosition: 3 },
+    ]));
+    expect(result).toBe('body');
+  });
+
+  it('picks longest varchar when no text type present', () => {
+    const result = pickTextColumn(makeIntrospection([
+      { name: 'id', dataType: 'integer', nullable: false, maxLength: null, ordinalPosition: 1 },
+      { name: 'short_name', dataType: 'character varying', nullable: false, maxLength: 50, ordinalPosition: 2 },
+      { name: 'description', dataType: 'character varying', nullable: true, maxLength: 500, ordinalPosition: 3 },
+    ]));
+    expect(result).toBe('description');
+  });
+
+  it('returns null when no text-like columns exist', () => {
+    const result = pickTextColumn(makeIntrospection([
+      { name: 'id', dataType: 'integer', nullable: false, maxLength: null, ordinalPosition: 1 },
+      { name: 'count', dataType: 'bigint', nullable: false, maxLength: null, ordinalPosition: 2 },
+      { name: 'active', dataType: 'boolean', nullable: false, maxLength: null, ordinalPosition: 3 },
+    ]));
+    expect(result).toBeNull();
+  });
+
+  it('picks varchar with null maxLength (unlimited) over one with maxLength', () => {
+    const result = pickTextColumn(makeIntrospection([
+      { name: 'short_col', dataType: 'character varying', nullable: false, maxLength: 100, ordinalPosition: 1 },
+      { name: 'unlimited_col', dataType: 'character varying', nullable: true, maxLength: null, ordinalPosition: 2 },
+    ]));
+    expect(result).toBe('unlimited_col');
+  });
+
+  it('handles citext and json types', () => {
+    const result = pickTextColumn(makeIntrospection([
+      { name: 'id', dataType: 'integer', nullable: false, maxLength: null, ordinalPosition: 1 },
+      { name: 'email', dataType: 'citext', nullable: false, maxLength: null, ordinalPosition: 2 },
+    ]));
+    expect(result).toBe('email');
   });
 });

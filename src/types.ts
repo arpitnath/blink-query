@@ -175,6 +175,77 @@ export interface PostgresLoadConfig {
   schema?: string;
 }
 
+// ─── PostgreSQL introspection & progressive types ────────────
+
+/** Column metadata from PostgreSQL introspection. */
+export interface PostgresColumnInfo {
+  /** Column name */
+  name: string;
+  /** PostgreSQL data type (e.g. 'text', 'integer', 'varchar', 'jsonb') */
+  dataType: string;
+  /** Whether the column allows NULL values */
+  nullable: boolean;
+  /** Character maximum length for varchar columns, null otherwise */
+  maxLength: number | null;
+  /** Ordinal position (1-based) */
+  ordinalPosition: number;
+}
+
+/** Result of introspecting a PostgreSQL table. */
+export interface PostgresIntrospection {
+  /** Table name */
+  table: string;
+  /** Schema name (default: 'public') */
+  schema: string;
+  /** Database name parsed from connection string */
+  database: string;
+  /** Ordered list of column metadata */
+  columns: PostgresColumnInfo[];
+  /** Detected primary key column name, if any */
+  primaryKey: string | null;
+  /** Approximate row count from pg_stat_user_tables (or exact COUNT(*) fallback) */
+  rowCount: number;
+}
+
+/** Callback invoked for each batch during progressive loading. */
+export type PostgresBatchCallback = (
+  docs: IngestDocument[],
+  batchIndex: number,
+  totalLoaded: number,
+) => void | Promise<void>;
+
+/** Configuration for progressive (batched) PostgreSQL loading. Extends base config. */
+export interface PostgresProgressiveConfig {
+  /** PostgreSQL connection string */
+  connectionString: string;
+  /** Table to load from (required for progressive — used to build query) */
+  table: string;
+  /** Schema name (default: 'public') */
+  schema?: string;
+  /** Column containing the text content to ingest */
+  textColumn?: string;
+  /** Column to use as document ID (auto-detected from primary key if omitted) */
+  idColumn?: string;
+  /** Column to use as document title */
+  titleColumn?: string;
+  /** Additional columns to include in metadata */
+  metadataColumns?: string[];
+  /** Number of rows per batch (required for progressive loading) */
+  batchSize: number;
+  /** Column to ORDER BY for deterministic pagination (default: primary key or first column) */
+  orderBy?: string;
+  /** Sort direction for ordering (default: 'asc') */
+  orderDirection?: 'asc' | 'desc';
+  /** Row offset to start from (for resumption) */
+  offset?: number;
+  /** Maximum total rows to load (default: unlimited) */
+  maxRows?: number;
+  /** Callback invoked for each loaded batch */
+  onBatch?: PostgresBatchCallback;
+  /** Optional WHERE clause to filter rows (without the WHERE keyword) */
+  where?: string;
+}
+
 /** Configuration for loading documents from web URLs */
 export interface WebLoadConfig {
   urls: string[];

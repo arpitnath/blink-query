@@ -3,8 +3,8 @@ import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKe
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
 import { processDocuments, loadDirectory, extractiveSummarize } from './ingest.js';
-import { loadFromPostgres, loadFromUrls, loadFromGit } from './adapters.js';
-import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, WebLoadConfig, GitLoadConfig } from './types.js';
+import { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, introspectPostgresTable, pickTextColumn } from './adapters.js';
+import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig } from './types.js';
 
 export interface BlinkOptions {
   dbPath?: string;
@@ -94,6 +94,48 @@ export class Blink {
     return this.ingest(docs, options);
   }
 
+  /**
+   * Progressive PostgreSQL ingestion with automatic column detection.
+   *
+   * Loads rows in batches using LIMIT/OFFSET, auto-detects text and ID columns
+   * via introspection when not explicitly specified, and ingests each batch
+   * incrementally into Blink records.
+   *
+   * @returns Combined IngestResult from all batches, plus the introspection data.
+   */
+  async ingestFromPostgresProgressive(
+    config: PostgresProgressiveConfig,
+    options: IngestOptions,
+  ): Promise<IngestResult & { introspection: PostgresIntrospection }> {
+    const schema = config.schema || 'public';
+
+    // Run introspection for auto-detection and metadata
+    const introspection = await introspectPostgresTable(
+      config.connectionString,
+      config.table,
+      schema,
+    );
+
+    // Auto-fill columns from introspection if not provided
+    const resolvedConfig: PostgresProgressiveConfig = { ...config };
+    if (!resolvedConfig.textColumn) {
+      const picked = pickTextColumn(introspection);
+      if (!picked) throw new Error(`No text column found in "${schema}"."${config.table}". Specify textColumn explicitly.`);
+      resolvedConfig.textColumn = picked;
+    }
+    if (!resolvedConfig.idColumn) {
+      resolvedConfig.idColumn = introspection.primaryKey || introspection.columns[0].name;
+    }
+
+    // Load all documents progressively
+    const docs = await loadFromPostgresProgressive(resolvedConfig);
+
+    // Ingest into Blink
+    const result = await this.ingest(docs, options);
+
+    return { ...result, introspection };
+  }
+
   /** Load web pages from URLs and ingest as Blink records */
   async ingestFromUrls(
     urls: string[],
@@ -121,7 +163,9 @@ export type {
   BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
   IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback,
   DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
-  PostgresLoadConfig, WebLoadConfig, GitLoadConfig, LLMConfig,
+  PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo,
+  PostgresBatchCallback,
+  WebLoadConfig, GitLoadConfig, LLMConfig,
 } from './types.js';
 
 // Re-export ingestion helpers
@@ -140,10 +184,10 @@ export {
 } from './ingest.js';
 
 // Re-export adapter functions
-export { loadFromPostgres, loadFromUrls, loadFromGit } from './adapters.js';
+export { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit } from './adapters.js';
 
 // Re-export adapter utilities
-export { stripHtml, parseUrl } from './adapters.js';
+export { stripHtml, parseUrl, introspectPostgresTable, pickTextColumn } from './adapters.js';
 
 // Re-export LLM helpers
 export { llmSummarize, llmClassify } from './llm.js';

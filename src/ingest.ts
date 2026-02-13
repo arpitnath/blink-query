@@ -76,6 +76,193 @@ export const FILESYSTEM_DERIVERS = {
   buildSources: filesystemSources,
 } as const;
 
+// ─── Postgres derivers (for PostgreSQL row data) ────────────
+
+export function postgresNamespace(
+  metadata: Record<string, unknown>,
+): string {
+  const table = (metadata.table as string) || 'unknown';
+  const schema = metadata.schema as string | undefined;
+  const database = metadata.database as string | undefined;
+  if (schema) return `${schema}/${table}`;
+  if (database) return `${database}/${table}`;
+  return table;
+}
+
+export function postgresTitle(
+  metadata: Record<string, unknown>,
+): string {
+  if (metadata.title && typeof metadata.title === 'string') return metadata.title;
+  const table = (metadata.table as string) || 'unknown';
+  const rowId = metadata.row_id;
+  if (rowId !== undefined && rowId !== null && rowId !== '') {
+    return `${table}/${rowId}`;
+  }
+  return `${table}/unknown`;
+}
+
+export function postgresTags(
+  metadata: Record<string, unknown>,
+  extraTags?: string[],
+): string[] {
+  const tags: string[] = ['postgres'];
+  const table = metadata.table as string | undefined;
+  const schema = metadata.schema as string | undefined;
+  if (table) tags.push(table);
+  if (schema) tags.push(schema);
+  if (extraTags) tags.push(...extraTags);
+  return [...new Set(tags.map(t => t.toLowerCase()))];
+}
+
+export function postgresSources(
+  metadata: Record<string, unknown>,
+): Source[] {
+  const table = (metadata.table as string) || undefined;
+  return [{
+    type: 'database',
+    table,
+    connection_string: (metadata.connection_string as string) || undefined,
+    query: (metadata.query as string) || undefined,
+  }];
+}
+
+/** Preset derivers for PostgreSQL row data. */
+export const POSTGRES_DERIVERS = {
+  deriveNamespace: postgresNamespace,
+  deriveTitle: postgresTitle,
+  deriveTags: postgresTags,
+  buildSources: postgresSources,
+} as const;
+
+// ─── Web derivers (for web-scraped content) ─────────────────
+
+export function webNamespace(
+  metadata: Record<string, unknown>,
+): string {
+  const url = metadata.url as string | undefined;
+  if (!url) return 'web/unknown';
+  try {
+    const hostname = new URL(url).hostname;
+    return `web/${hostname.replace(/\./g, '-')}`;
+  } catch {
+    return 'web/unknown';
+  }
+}
+
+export function webTitle(
+  metadata: Record<string, unknown>,
+): string {
+  if (metadata.title && typeof metadata.title === 'string') return metadata.title;
+  const url = metadata.url as string | undefined;
+  if (url) {
+    try {
+      const pathname = new URL(url).pathname;
+      const segments = pathname.split('/').filter(Boolean);
+      if (segments.length > 0) return segments[segments.length - 1];
+    } catch {
+      // fall through
+    }
+  }
+  return 'page';
+}
+
+export function webTags(
+  metadata: Record<string, unknown>,
+  extraTags?: string[],
+): string[] {
+  const tags: string[] = ['web'];
+  const domain = metadata.domain as string | undefined;
+  if (domain) tags.push(domain);
+  const contentType = metadata.content_type as string | undefined;
+  if (contentType) {
+    // Extract short form: "text/html" → "html", "application/json" → "json"
+    const short = contentType.split('/').pop()?.split(';')[0]?.trim();
+    if (short) tags.push(short);
+  }
+  if (extraTags) tags.push(...extraTags);
+  return [...new Set(tags.map(t => t.toLowerCase()))];
+}
+
+export function webSources(
+  metadata: Record<string, unknown>,
+): Source[] {
+  const url = (metadata.url as string) || undefined;
+  return [{
+    type: 'web',
+    url,
+    endpoint: url,
+    last_fetched: new Date().toISOString(),
+  }];
+}
+
+/** Preset derivers for web-scraped content. */
+export const WEB_DERIVERS = {
+  deriveNamespace: webNamespace,
+  deriveTitle: webTitle,
+  deriveTags: webTags,
+  buildSources: webSources,
+} as const;
+
+// ─── Git derivers (for git repository data) ─────────────────
+
+export function gitNamespace(
+  metadata: Record<string, unknown>,
+): string {
+  const repo = (metadata.repo as string) || 'unknown';
+  const segments = repo.replace(/\\/g, '/').split('/').filter(Boolean);
+  const repoName = segments[segments.length - 1] || 'unknown';
+  return `git/${repoName}`;
+}
+
+export function gitTitle(
+  metadata: Record<string, unknown>,
+): string {
+  const filePath = metadata.file_path as string | undefined;
+  if (filePath) {
+    const ext = extname(filePath);
+    return ext ? filePath.slice(0, -ext.length) : filePath;
+  }
+  const commitSha = metadata.commit_sha as string | undefined;
+  if (commitSha) return commitSha.slice(0, 7);
+  return (metadata.repo as string) || 'unknown';
+}
+
+export function gitTags(
+  metadata: Record<string, unknown>,
+  extraTags?: string[],
+): string[] {
+  const tags: string[] = ['git'];
+  const ref = metadata.ref as string | undefined;
+  if (ref) tags.push(ref);
+  const repo = metadata.repo as string | undefined;
+  if (repo) {
+    const segments = repo.replace(/\\/g, '/').split('/').filter(Boolean);
+    const repoName = segments[segments.length - 1];
+    if (repoName) tags.push(repoName);
+  }
+  if (extraTags) tags.push(...extraTags);
+  return [...new Set(tags.map(t => t.toLowerCase()))];
+}
+
+export function gitSources(
+  metadata: Record<string, unknown>,
+): Source[] {
+  return [{
+    type: 'vcs',
+    repo: (metadata.repo as string) || undefined,
+    ref: (metadata.ref as string) || undefined,
+    file_path: (metadata.file_path as string) || undefined,
+  }];
+}
+
+/** Preset derivers for git repository data. */
+export const GIT_DERIVERS = {
+  deriveNamespace: gitNamespace,
+  deriveTitle: gitTitle,
+  deriveTags: gitTags,
+  buildSources: gitSources,
+} as const;
+
 // ─── Resolve namespace with prefix/override ─────────────────
 
 function resolveNamespace(

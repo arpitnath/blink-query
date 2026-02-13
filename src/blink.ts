@@ -107,4 +107,10 @@ export { loadDirectory, extractiveSummarize } from './ingest.js';
 export {
   FILESYSTEM_DERIVERS,
   filesystemNamespace, filesystemTitle, filesystemTags, filesystemSources,
+  POSTGRES_DERIVERS,
+  postgresNamespace, postgresTitle, postgresTags, postgresSources,
+  WEB_DERIVERS,
+  webNamespace, webTitle, webTags, webSources,
+  GIT_DERIVERS,
+  gitNamespace, gitTitle, gitTags, gitSources,
 } from './ingest.js';

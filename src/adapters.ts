@@ -1,4 +1,7 @@
-import type { IngestDocument, Source, PostgresLoadConfig, WebLoadConfig } from './types.js';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { extname, basename } from 'path';
+import type { IngestDocument, Source, PostgresLoadConfig, WebLoadConfig, GitLoadConfig } from './types.js';
 
 // ─── HTML text extraction helper ─────────────────────────────
 
@@ -188,6 +191,101 @@ export async function loadFromUrls(
       if (result.status === 'fulfilled' && result.value !== null) {
         docs.push(result.value);
       }
+    }
+  }
+
+  return docs;
+}
+
+// ─── Git repository adapter ──────────────────────────────────
+
+const execFileAsync = promisify(execFile);
+
+const GIT_DEFAULT_EXCLUDES = ['node_modules/**', '.git/**', 'dist/**', '*.lock', 'package-lock.json'];
+const GIT_TEXT_EXTENSIONS = new Set([
+  '.ts', '.js', '.tsx', '.jsx', '.py', '.go', '.rs', '.java', '.c', '.cpp', '.h',
+  '.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv', '.xml', '.html', '.css',
+  '.sh', '.bash', '.zsh', '.sql', '.graphql', '.prisma', '.env.example',
+]);
+
+async function gitExec(cwd: string, args: string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 10 * 1024 * 1024 });
+    return stdout.trim();
+  } catch (err: any) {
+    if (err.stderr?.includes('not a git repository')) {
+      throw new Error(`Not a git repository: ${cwd}`);
+    }
+    throw err;
+  }
+}
+
+function matchesGlob(filePath: string, pattern: string): boolean {
+  const regex = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '___DOUBLESTAR___')
+    .replace(/\*/g, '[^/]*')
+    .replace(/___DOUBLESTAR___/g, '.*');
+  return new RegExp(`^${regex}$`).test(filePath);
+}
+
+function shouldIncludeFile(filePath: string, include?: string[], exclude?: string[]): boolean {
+  const excludePatterns = exclude || GIT_DEFAULT_EXCLUDES;
+  for (const pattern of excludePatterns) {
+    if (matchesGlob(filePath, pattern)) return false;
+  }
+
+  if (include && include.length > 0) {
+    return include.some(pattern => matchesGlob(filePath, pattern));
+  }
+
+  // Default: include files with known text extensions
+  const ext = extname(filePath).toLowerCase();
+  return GIT_TEXT_EXTENSIONS.has(ext);
+}
+
+export async function loadFromGit(config: GitLoadConfig): Promise<IngestDocument[]> {
+  const ref = config.ref || 'HEAD';
+  const repoPath = config.repoPath;
+  const maxFileSize = config.maxFileSize ?? 100_000;
+
+  // Get commit SHA
+  const commitSha = await gitExec(repoPath, ['rev-parse', ref]);
+
+  // List all files in the tree
+  const fileListRaw = await gitExec(repoPath, ['ls-tree', '-r', '--name-only', ref]);
+  const allFiles = fileListRaw.split('\n').filter(Boolean);
+
+  // Filter by include/exclude
+  const filtered = allFiles.filter(f => shouldIncludeFile(f, config.include, config.exclude));
+
+  const docs: IngestDocument[] = [];
+
+  for (const filePath of filtered) {
+    try {
+      // Check file size
+      const sizeStr = await gitExec(repoPath, ['cat-file', '-s', `${ref}:${filePath}`]);
+      const size = parseInt(sizeStr, 10);
+      if (size > maxFileSize) continue;
+
+      // Read file content
+      const content = await gitExec(repoPath, ['show', `${ref}:${filePath}`]);
+
+      docs.push({
+        id: `${commitSha.slice(0, 7)}:${filePath}`,
+        text: content,
+        metadata: {
+          repo: repoPath,
+          ref,
+          file_path: filePath,
+          file_name: basename(filePath),
+          file_type: extname(filePath),
+          commit_sha: commitSha,
+        },
+      });
+    } catch {
+      // Skip files that can't be read (binary, etc.)
+      continue;
     }
   }
 

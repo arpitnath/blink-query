@@ -182,7 +182,7 @@ function removeFTS(db: Database, recordPath: string): void {
   db.prepare('DELETE FROM records_fts WHERE record_path = ?').run(recordPath);
 }
 
-export function searchByKeywords(db: Database, keywords: string[], namespace?: string, limit = 10): BlinkRecord[] {
+export function searchByKeywords(db: Database, keywords: string[], namespace?: string, limit = 10, offset = 0): BlinkRecord[] {
   if (keywords.length === 0) return [];
 
   // Cap keywords to prevent excessive FTS5 expressions
@@ -206,6 +206,11 @@ export function searchByKeywords(db: Database, keywords: string[], namespace?: s
 
   sql += ' ORDER BY rank LIMIT ?';
   params.push(limit);
+
+  if (offset > 0) {
+    sql += ' OFFSET ?';
+    params.push(offset);
+  }
 
   const rows = db.prepare(sql).all(...params) as any[];
   return rows.map(row => {
@@ -246,7 +251,11 @@ function deserializeRecord(row: RawRecord): BlinkRecord {
   };
 }
 
-export function save(db: Database, input: SaveInput): BlinkRecord {
+/**
+ * Internal save logic without transaction wrapper.
+ * Used by both save() and saveMany() to avoid nested transactions.
+ */
+function saveInner(db: Database, input: SaveInput): string {
   // Validate and clean input at the boundary
   const cleanedInput = validateSaveInput(input);
   const type = cleanedInput.type || 'SUMMARY';
@@ -279,43 +288,46 @@ export function save(db: Database, input: SaveInput): BlinkRecord {
     counter++;
   }
 
-  const doSave = db.transaction(() => {
-    // Check for existing record at this path
-    const existing = db.prepare('SELECT id FROM records WHERE path = ?').get(path) as { id: string } | null;
+  // Check for existing record at this path
+  const existing = db.prepare('SELECT id FROM records WHERE path = ?').get(path) as { id: string } | null;
 
-    if (existing) {
-      // Update existing
-      db.prepare(`
-        UPDATE records SET
-          title = ?, type = ?, summary = ?, content = ?, ttl = ?,
-          updated_at = ?, content_hash = ?, tags = ?, token_count = ?,
-          sources = ?
-        WHERE path = ?
-      `).run(input.title, type, summary, content, ttl, timestamp, hash, JSON.stringify(tags), tokens, sources, path);
+  if (existing) {
+    // Update existing
+    db.prepare(`
+      UPDATE records SET
+        title = ?, type = ?, summary = ?, content = ?, ttl = ?,
+        updated_at = ?, content_hash = ?, tags = ?, token_count = ?,
+        sources = ?
+      WHERE path = ?
+    `).run(input.title, type, summary, content, ttl, timestamp, hash, JSON.stringify(tags), tokens, sources, path);
 
-      // Re-index FTS
-      indexFTS(db, path, input.title, tags, summary);
-    } else {
-      // Insert new
-      const id = shortId();
-      ensureZone(db, input.namespace);
+    // Re-index FTS
+    indexFTS(db, path, input.title, tags, summary);
+  } else {
+    // Insert new
+    const id = shortId();
+    ensureZone(db, input.namespace);
 
-      db.prepare(`
-        INSERT INTO records (id, path, namespace, title, type, summary, content, ttl,
-          created_at, updated_at, content_hash, tags, token_count, hit_count, last_hit, sources)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
-      `).run(id, path, input.namespace, input.title, type, summary, content, ttl,
-        timestamp, timestamp, hash, JSON.stringify(tags), tokens, sources);
+    db.prepare(`
+      INSERT INTO records (id, path, namespace, title, type, summary, content, ttl,
+        created_at, updated_at, content_hash, tags, token_count, hit_count, last_hit, sources)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+    `).run(id, path, input.namespace, input.title, type, summary, content, ttl,
+      timestamp, timestamp, hash, JSON.stringify(tags), tokens, sources);
 
-      // Index FTS
-      indexFTS(db, path, input.title, tags, summary);
+    // Index FTS
+    indexFTS(db, path, input.title, tags, summary);
 
-      // Update zone count
-      incrementZoneCount(db, input.namespace, 1);
-    }
-  });
+    // Update zone count
+    incrementZoneCount(db, input.namespace, 1);
+  }
 
-  doSave();
+  return path;
+}
+
+export function save(db: Database, input: SaveInput): BlinkRecord {
+  const doSave = db.transaction(() => saveInner(db, input));
+  const path = doSave();
   return getByPath(db, path)!;
 }
 
@@ -325,7 +337,7 @@ export function getByPath(db: Database, path: string): BlinkRecord | null {
   return deserializeRecord(row);
 }
 
-export function list(db: Database, namespace: string, sort: 'recent' | 'hits' | 'title' = 'recent', limit?: number): BlinkRecord[] {
+export function list(db: Database, namespace: string, sort: 'recent' | 'hits' | 'title' = 'recent', limit?: number, offset?: number): BlinkRecord[] {
   // Normalize: remove trailing slash
   const ns = namespace.replace(/\/$/, '');
 
@@ -334,9 +346,15 @@ export function list(db: Database, namespace: string, sort: 'recent' | 'hits' | 
   let sql = `SELECT * FROM records WHERE namespace = ? OR namespace LIKE ? ORDER BY ${orderBy}`;
   const params: unknown[] = [ns, ns + '/%'];
 
-  if (limit) {
+  // SQLite requires LIMIT before OFFSET, so if offset is provided without limit, use -1 (unlimited)
+  if (limit || (offset && offset > 0)) {
     sql += ' LIMIT ?';
-    params.push(limit);
+    params.push(limit || -1);
+  }
+
+  if (offset && offset > 0) {
+    sql += ' OFFSET ?';
+    params.push(offset);
   }
 
   const rows = db.prepare(sql).all(...params) as RawRecord[];
@@ -391,9 +409,10 @@ export function incrementHit(db: Database, path: string): void {
 
 export function saveMany(db: Database, inputs: SaveInput[]): BlinkRecord[] {
   const doSaveMany = db.transaction(() => {
-    return inputs.map(input => save(db, input));
+    return inputs.map(input => saveInner(db, input));
   });
-  return doSaveMany();
+  const paths = doSaveMany();
+  return paths.map(path => getByPath(db, path)!);
 }
 
 // Query records by namespace prefix (for query executor)

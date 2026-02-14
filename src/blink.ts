@@ -38,14 +38,14 @@ export class Blink {
   }
 
   /** Search by space-separated keywords */
-  search(keywords: string, options?: { namespace?: string; limit?: number }): BlinkRecord[] {
+  search(keywords: string, options?: { namespace?: string; limit?: number; offset?: number }): BlinkRecord[] {
     const kws = keywords.split(/\s+/).filter(Boolean);
-    return searchByKeywords(this.db, kws, options?.namespace, options?.limit);
+    return searchByKeywords(this.db, kws, options?.namespace, options?.limit, options?.offset);
   }
 
   /** List records in a namespace */
-  list(namespace: string, sort?: 'recent' | 'hits' | 'title'): BlinkRecord[] {
-    return list(this.db, namespace, sort);
+  list(namespace: string, sort?: 'recent' | 'hits' | 'title', options?: { limit?: number; offset?: number }): BlinkRecord[] {
+    return list(this.db, namespace, sort, options?.limit, options?.offset);
   }
 
   /** Execute a Blink query string */

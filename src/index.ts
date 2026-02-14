@@ -114,8 +114,10 @@ program
   .command('list <namespace>')
   .description('List records in a namespace')
   .option('--sort <sort>', 'Sort by: recent, hits, title', 'recent')
+  .option('--limit <n>', 'Max results', parseInt)
+  .option('--offset <n>', 'Skip first N results', parseInt, 0)
   .action((namespace: string, opts) => {
-    const records = getBlink().list(namespace, opts.sort);
+    const records = getBlink().list(namespace, opts.sort, { limit: opts.limit, offset: opts.offset });
 
     if (program.opts().json) {
       console.log(JSON.stringify(records, null, 2));
@@ -142,9 +144,10 @@ program
   .command('search <keywords...>')
   .description('Search records by keywords')
   .option('--limit <n>', 'Max results', parseInt, 10)
+  .option('--offset <n>', 'Skip first N results', parseInt, 0)
   .option('--ns <namespace>', 'Limit to namespace')
   .action((keywords: string[], opts) => {
-    const results = getBlink().search(keywords.join(' '), { namespace: opts.ns, limit: opts.limit });
+    const results = getBlink().search(keywords.join(' '), { namespace: opts.ns, limit: opts.limit, offset: opts.offset });
 
     if (program.opts().json) {
       console.log(JSON.stringify(results, null, 2));

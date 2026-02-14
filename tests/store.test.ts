@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import {
   initDB,
   save,
+  saveMany,
   getByPath,
   list,
   deleteRecord,
@@ -122,6 +123,46 @@ describe('store', () => {
       const results = list(db, 'projects');
       expect(results).toHaveLength(2);
     });
+
+    it('supports limit parameter', () => {
+      save(db, { namespace: 'items', title: 'Item 1', summary: 'first' });
+      save(db, { namespace: 'items', title: 'Item 2', summary: 'second' });
+      save(db, { namespace: 'items', title: 'Item 3', summary: 'third' });
+
+      const results = list(db, 'items', 'recent', 2);
+      expect(results).toHaveLength(2);
+    });
+
+    it('supports offset parameter', () => {
+      save(db, { namespace: 'items', title: 'Item 1', summary: 'first' });
+      save(db, { namespace: 'items', title: 'Item 2', summary: 'second' });
+      save(db, { namespace: 'items', title: 'Item 3', summary: 'third' });
+
+      const results = list(db, 'items', 'title', undefined, 1);
+      expect(results).toHaveLength(2);
+      expect(results[0].title).toBe('Item 2');
+    });
+
+    it('supports pagination with limit and offset', () => {
+      for (let i = 1; i <= 10; i++) {
+        save(db, { namespace: 'pages', title: `Page ${String(i).padStart(2, '0')}`, summary: `content ${i}` });
+      }
+
+      // Get first page (items 01-03)
+      const page1 = list(db, 'pages', 'title', 3, 0);
+      expect(page1).toHaveLength(3);
+      expect(page1[0].title).toBe('Page 01');
+
+      // Get second page (items 04-06)
+      const page2 = list(db, 'pages', 'title', 3, 3);
+      expect(page2).toHaveLength(3);
+      expect(page2[0].title).toBe('Page 04');
+
+      // Get third page (items 07-09)
+      const page3 = list(db, 'pages', 'title', 3, 6);
+      expect(page3).toHaveLength(3);
+      expect(page3[0].title).toBe('Page 07');
+    });
   });
 
   describe('delete', () => {
@@ -162,6 +203,52 @@ describe('store', () => {
 
       const results = searchByKeywords(db, ['redis', 'caching']);
       expect(results[0].title).toBe('Redis Caching');
+    });
+
+    it('supports offset parameter', () => {
+      save(db, { namespace: 'docs', title: 'Doc 1', summary: 'testing guide' });
+      save(db, { namespace: 'docs', title: 'Doc 2', summary: 'testing best practices' });
+      save(db, { namespace: 'docs', title: 'Doc 3', summary: 'testing strategies' });
+
+      const allResults = searchByKeywords(db, ['testing'], undefined, 10, 0);
+      expect(allResults).toHaveLength(3);
+
+      const offsetResults = searchByKeywords(db, ['testing'], undefined, 10, 1);
+      expect(offsetResults).toHaveLength(2);
+      expect(offsetResults[0].path).toBe(allResults[1].path);
+    });
+  });
+
+  describe('saveMany', () => {
+    it('saves multiple records in a single transaction', () => {
+      const inputs = [
+        { namespace: 'bulk', title: 'Record 1', summary: 'first' },
+        { namespace: 'bulk', title: 'Record 2', summary: 'second' },
+        { namespace: 'bulk', title: 'Record 3', summary: 'third' },
+      ];
+
+      const saved = saveMany(db, inputs);
+      expect(saved).toHaveLength(3);
+      expect(saved[0].title).toBe('Record 1');
+      expect(saved[1].title).toBe('Record 2');
+      expect(saved[2].title).toBe('Record 3');
+
+      const all = list(db, 'bulk');
+      expect(all).toHaveLength(3);
+    });
+
+    it('rolls back all saves on error', () => {
+      const inputs = [
+        { namespace: 'bulk', title: 'Valid 1', summary: 'ok' },
+        { namespace: 'bulk', title: 'Valid 2', summary: 'ok' },
+        { namespace: '', title: 'Invalid', summary: 'bad' }, // Empty namespace should fail
+      ];
+
+      expect(() => saveMany(db, inputs)).toThrow();
+
+      // None of the records should be saved
+      const all = list(db, 'bulk');
+      expect(all).toHaveLength(0);
     });
   });
 });

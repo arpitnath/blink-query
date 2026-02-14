@@ -211,4 +211,89 @@ describe('query parser', () => {
     expect(ast.limit).toBe(5);
     expect(ast.offset).toBe(10);
   });
+
+  // NOT operator tests
+  it('parses NOT operator with single condition', () => {
+    const ast = parseQuery("test where not type = 'META'");
+    expect(ast.where).toEqual({
+      type: 'not',
+      child: { field: 'type', op: '=', value: 'META' }
+    });
+  });
+
+  it('parses NOT with parenthesized group', () => {
+    const ast = parseQuery("test where not (tag = 'draft' or tag = 'wip')");
+    expect(ast.where).toEqual({
+      type: 'not',
+      child: {
+        type: 'or',
+        children: [
+          { field: 'tag', op: '=', value: 'draft' },
+          { field: 'tag', op: '=', value: 'wip' }
+        ]
+      }
+    });
+  });
+
+  it('parses AND with NOT', () => {
+    const ast = parseQuery("test where type = 'SUMMARY' and not tag = 'internal'");
+    expect(ast.where).toEqual({
+      type: 'and',
+      children: [
+        { field: 'type', op: '=', value: 'SUMMARY' },
+        {
+          type: 'not',
+          child: { field: 'tag', op: '=', value: 'internal' }
+        }
+      ]
+    });
+  });
+
+  it('parses double NOT', () => {
+    const ast = parseQuery("test where not not type = 'META'");
+    expect(ast.where).toEqual({
+      type: 'not',
+      child: {
+        type: 'not',
+        child: { field: 'type', op: '=', value: 'META' }
+      }
+    });
+  });
+
+  it('respects NOT precedence (NOT binds tighter than AND)', () => {
+    // not a='1' and b='2' should parse as: (not a='1') and b='2'
+    const ast = parseQuery("ns where not a='1' and b='2'");
+    expect(ast.where).toEqual({
+      type: 'and',
+      children: [
+        {
+          type: 'not',
+          child: { field: 'a', op: '=', value: '1' }
+        },
+        { field: 'b', op: '=', value: '2' }
+      ]
+    });
+  });
+
+  it('parses NOT with OR and AND', () => {
+    const ast = parseQuery("ns where not type='META' or type='SOURCE' and tag='draft'");
+    // Precedence: NOT > AND > OR
+    // Should parse as: (not type='META') or (type='SOURCE' and tag='draft')
+    expect(ast.where).toEqual({
+      type: 'or',
+      children: [
+        {
+          type: 'not',
+          child: { field: 'type', op: '=', value: 'META' }
+        },
+        {
+          type: 'and',
+          children: [
+            { field: 'type', op: '=', value: 'SOURCE' },
+            { field: 'tag', op: '=', value: 'draft' }
+          ]
+        }
+      ]
+    });
+  });
 });

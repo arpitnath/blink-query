@@ -63,6 +63,12 @@ function whereExprToSQL(
   params: unknown[],
   allowedFields: Set<string>
 ): string {
+  // Handle NOT node
+  if ('type' in expr && expr.type === 'not') {
+    const inner = whereExprToSQL((expr as any).child, params, allowedFields);
+    return `NOT (${inner})`;
+  }
+
   // Handle AND/OR nodes
   if ('type' in expr && (expr.type === 'and' || expr.type === 'or')) {
     const parts = expr.children.map(child => whereExprToSQL(child, params, allowedFields));

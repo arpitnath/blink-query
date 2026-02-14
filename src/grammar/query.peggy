@@ -26,10 +26,14 @@ OrExpr = first:AndExpr rest:(_ "or"i _ e:AndExpr { return e; })* {
 }
 
 // AND has higher precedence than OR
-AndExpr = first:Atom rest:(_ "and"i _ a:Atom { return a; })* {
+AndExpr = first:NotExpr rest:(_ "and"i _ a:NotExpr { return a; })* {
   if (rest.length === 0) return first;
   return { type: 'and', children: [first, ...rest] };
 }
+
+// NOT has higher precedence than AND (binds tighter)
+NotExpr = "not"i _ expr:NotExpr { return { type: 'not', child: expr }; }
+        / Atom
 
 // Atom: either a parenthesized expression or a condition
 Atom = "(" _ expr:OrExpr _ ")" { return expr; } / Condition

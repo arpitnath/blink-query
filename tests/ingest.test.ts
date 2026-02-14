@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Blink } from '../src/blink.js';
-import { documentToSaveInput, extractiveSummarize } from '../src/ingest.js';
+import { documentToSaveInput, extractiveSummarize, loadDirectory } from '../src/ingest.js';
 import type { IngestDocument, IngestOptions } from '../src/types.js';
+import { mkdtemp, writeFile, mkdir, rm } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 function mockDoc(overrides?: Partial<IngestDocument>): IngestDocument {
   return {
@@ -185,5 +188,194 @@ describe('blink.ingest()', () => {
     expect(record!.type).toBe('SOURCE');
     expect(record!.summary).toBe('A readme file');
     expect(record!.sources[0].type).toBe('file');
+  });
+});
+
+describe('loadDirectory enhancements', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'blink-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('E1: skips files larger than maxFileSize', async () => {
+    // Create a small file and a large file
+    await writeFile(join(tempDir, 'small.txt'), 'Small content');
+    await writeFile(join(tempDir, 'large.txt'), 'x'.repeat(2_000_000)); // 2MB
+
+    const docs = await loadDirectory(tempDir, { maxFileSize: 1_048_576 }); // 1MB limit
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].metadata.file_name).toBe('small.txt');
+  });
+
+  it('E2: skips hidden files by default', async () => {
+    await writeFile(join(tempDir, '.hidden.txt'), 'Hidden content');
+    await writeFile(join(tempDir, 'visible.txt'), 'Visible content');
+
+    const docs = await loadDirectory(tempDir);
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].metadata.file_name).toBe('visible.txt');
+  });
+
+  it('E2: includes hidden files when includeHidden is true', async () => {
+    await writeFile(join(tempDir, '.hidden.txt'), 'Hidden content');
+    await writeFile(join(tempDir, 'visible.txt'), 'Visible content');
+
+    const docs = await loadDirectory(tempDir, { includeHidden: true });
+
+    expect(docs).toHaveLength(2);
+    const fileNames = docs.map(d => d.metadata.file_name);
+    expect(fileNames).toContain('.hidden.txt');
+    expect(fileNames).toContain('visible.txt');
+  });
+
+  it('E2: skips hidden directories by default', async () => {
+    await mkdir(join(tempDir, '.hidden-dir'));
+    await mkdir(join(tempDir, 'visible-dir'));
+    await writeFile(join(tempDir, '.hidden-dir', 'file.txt'), 'In hidden dir');
+    await writeFile(join(tempDir, 'visible-dir', 'file.txt'), 'In visible dir');
+
+    const docs = await loadDirectory(tempDir, { recursive: true });
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].text).toBe('In visible dir');
+  });
+
+  it('E3: skips empty files', async () => {
+    await writeFile(join(tempDir, 'empty.txt'), '');
+    await writeFile(join(tempDir, 'whitespace.txt'), '   \n  \t  ');
+    await writeFile(join(tempDir, 'content.txt'), 'Has content');
+
+    const docs = await loadDirectory(tempDir);
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].metadata.file_name).toBe('content.txt');
+  });
+
+  it('E5: calls onProgress callback for each file', async () => {
+    await writeFile(join(tempDir, 'file1.txt'), 'Content 1');
+    await writeFile(join(tempDir, 'file2.txt'), 'Content 2');
+    await writeFile(join(tempDir, 'file3.txt'), 'Content 3');
+
+    const progressCalls: Array<{ current: number; file: string }> = [];
+    await loadDirectory(tempDir, {
+      onProgress: (info) => progressCalls.push(info),
+    });
+
+    expect(progressCalls).toHaveLength(3);
+    expect(progressCalls[0].current).toBe(1);
+    expect(progressCalls[1].current).toBe(2);
+    expect(progressCalls[2].current).toBe(3);
+    expect(progressCalls.map(p => p.file)).toContain('file1.txt');
+    expect(progressCalls.map(p => p.file)).toContain('file2.txt');
+    expect(progressCalls.map(p => p.file)).toContain('file3.txt');
+  });
+
+  it('E6: adds loader metadata as "basic"', async () => {
+    await writeFile(join(tempDir, 'test.txt'), 'Test content');
+
+    const docs = await loadDirectory(tempDir);
+
+    expect(docs).toHaveLength(1);
+    expect(docs[0].metadata.loader).toBe('basic');
+  });
+
+  it('E7: recognizes additional text extensions - Vue', async () => {
+    await writeFile(join(tempDir, 'component.vue'), '<template>...</template>');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - Svelte', async () => {
+    await writeFile(join(tempDir, 'component.svelte'), '<script>...</script>');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - SCSS', async () => {
+    await writeFile(join(tempDir, 'styles.scss'), '$primary: blue;');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - GraphQL', async () => {
+    await writeFile(join(tempDir, 'schema.graphql'), 'type Query { ... }');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - Protocol Buffers', async () => {
+    await writeFile(join(tempDir, 'message.proto'), 'syntax = "proto3";');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - Terraform', async () => {
+    await writeFile(join(tempDir, 'main.tf'), 'resource "aws_instance" {}');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - Prisma', async () => {
+    await writeFile(join(tempDir, 'schema.prisma'), 'model User {}');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - Swift', async () => {
+    await writeFile(join(tempDir, 'App.swift'), 'func main() {}');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - Kotlin', async () => {
+    await writeFile(join(tempDir, 'Main.kt'), 'fun main() {}');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - Solidity', async () => {
+    await writeFile(join(tempDir, 'Token.sol'), 'contract Token {}');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - C#', async () => {
+    await writeFile(join(tempDir, 'Program.cs'), 'class Program {}');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('E7: recognizes additional text extensions - F#', async () => {
+    await writeFile(join(tempDir, 'Program.fs'), 'let x = 1');
+    const docs = await loadDirectory(tempDir);
+    expect(docs).toHaveLength(1);
+  });
+
+  it('combines all enhancements in a realistic scenario', async () => {
+    // Create various files
+    await writeFile(join(tempDir, 'normal.md'), 'Normal markdown');
+    await writeFile(join(tempDir, 'component.vue'), '<template>Vue</template>');
+    await writeFile(join(tempDir, '.gitignore'), 'node_modules');
+    await writeFile(join(tempDir, 'empty.txt'), '');
+    await writeFile(join(tempDir, 'large.txt'), 'x'.repeat(2_000_000));
+
+    const progressCalls: Array<{ current: number; file: string }> = [];
+    const docs = await loadDirectory(tempDir, {
+      maxFileSize: 1_048_576,
+      onProgress: (info) => progressCalls.push(info),
+    });
+
+    // Should only load normal.md and component.vue (2 files)
+    // Skips: .gitignore (hidden), empty.txt (empty), large.txt (too big)
+    expect(docs).toHaveLength(2);
+    expect(progressCalls).toHaveLength(2);
+    expect(docs.every(d => d.metadata.loader === 'basic')).toBe(true);
   });
 });

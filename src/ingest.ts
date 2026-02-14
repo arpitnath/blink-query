@@ -353,9 +353,17 @@ export async function processDocuments(
 
 // ─── Directory loading ──────────────────────────────────────
 
+export interface LoadDirectoryOptions {
+  recursive?: boolean;
+  extensions?: string[];
+  maxFileSize?: number;
+  includeHidden?: boolean;
+  onProgress?: (info: { current: number; file: string }) => void;
+}
+
 export async function loadDirectory(
   dirPath: string,
-  options?: { recursive?: boolean; extensions?: string[] },
+  options?: LoadDirectoryOptions,
 ): Promise<IngestDocument[]> {
   try {
     // Optional peer dependency — only resolved at runtime
@@ -368,7 +376,10 @@ export async function loadDirectory(
     return llamaDocs.map((doc: any) => ({
       id: doc.id_,
       text: typeof doc.getText === 'function' ? doc.getText() : doc.text,
-      metadata: (doc.metadata || {}) as Record<string, unknown>,
+      metadata: {
+        ...(doc.metadata || {}),
+        loader: 'llamaindex',
+      } as Record<string, unknown>,
     }));
   } catch (err) {
     if (
@@ -390,11 +401,27 @@ const DEFAULT_TEXT_EXTENSIONS = new Set([
   '.c', '.cpp', '.h', '.hpp', '.rb', '.sh', '.bash', '.zsh',
   '.yaml', '.yml', '.toml', '.xml', '.html', '.css', '.sql',
   '.env', '.conf', '.cfg', '.ini', '.log',
+  '.vue', '.svelte',                     // Frontend frameworks
+  '.scss', '.sass', '.less',             // CSS preprocessors
+  '.graphql', '.gql',                    // GraphQL
+  '.proto',                              // Protocol Buffers
+  '.tf', '.hcl',                         // Terraform
+  '.prisma',                             // Prisma
+  '.dockerfile',                         // Docker
+  '.r',                                  // R language
+  '.swift', '.kt', '.kts',               // Swift, Kotlin
+  '.lua', '.pl', '.pm',                  // Lua, Perl
+  '.ex', '.exs',                         // Elixir
+  '.erl', '.hrl',                        // Erlang
+  '.zig',                                // Zig
+  '.sol',                                // Solidity
+  '.cs',                                 // C#
+  '.fs',                                 // F#
 ]);
 
 async function loadDirectoryBasic(
   dirPath: string,
-  options?: { recursive?: boolean; extensions?: string[] },
+  options?: LoadDirectoryOptions,
 ): Promise<IngestDocument[]> {
   const { readdir, readFile, stat } = await import('fs/promises');
   const { join, relative, extname: ext } = await import('path');
@@ -410,13 +437,23 @@ async function loadDirectoryBasic(
   async function walk(dir: string) {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
+      // E2: Skip hidden files/directories unless includeHidden is true
+      if (entry.name.startsWith('.') && !options?.includeHidden) continue;
+
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory() && options?.recursive !== false) {
         await walk(fullPath);
       } else if (entry.isFile() && allowedExts.has(ext(entry.name).toLowerCase())) {
         try {
-          const content = await readFile(fullPath, 'utf-8');
+          // E1: Check file size before reading
           const stats = await stat(fullPath);
+          if (stats.size > (options?.maxFileSize ?? 1_048_576)) continue;
+
+          const content = await readFile(fullPath, 'utf-8');
+
+          // E3: Skip empty files
+          if (content.trim().length === 0) continue;
+
           const relPath = relative(basePath, fullPath);
           docs.push({
             id: randomUUID(),
@@ -426,8 +463,14 @@ async function loadDirectoryBasic(
               file_name: entry.name,
               file_type: ext(entry.name),
               file_size: stats.size,
+              loader: 'basic',  // E6: Loader metadata
             },
           });
+
+          // E5: Progress callback
+          if (options?.onProgress) {
+            options.onProgress({ current: docs.length, file: relPath });
+          }
         } catch {
           // Skip files that can't be read as UTF-8
           continue;

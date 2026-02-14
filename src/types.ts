@@ -60,10 +60,11 @@ export interface QueryAST {
   since?: string;
 }
 
-// Recursive where expression tree (supports AND/OR)
+// Recursive where expression tree (supports AND/OR/NOT)
 export type WhereExpr =
   | { type: 'and'; children: WhereExpr[] }
   | { type: 'or'; children: WhereExpr[] }
+  | { type: 'not'; child: WhereExpr }
   | QueryCondition;
 
 export interface QueryCondition {

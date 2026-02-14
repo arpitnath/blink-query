@@ -114,4 +114,50 @@ describe('query executor', () => {
     const results = executeQuery(db, "discoveries where type in ('SUMMARY', 'SOURCE') or tag='api' limit 5 offset 0");
     expect(results.length).toBeGreaterThanOrEqual(1);
   });
+
+  // NOT operator tests
+  it('NOT excludes matching records', () => {
+    const results = executeQuery(db, "me where not type = 'META'");
+    expect(results).toHaveLength(1);
+    expect(results[0].type).toBe('SUMMARY');
+    expect(results[0].title).toBe('Background');
+  });
+
+  it('NOT with grouped OR', () => {
+    // Exclude both META and SUMMARY types
+    save(db, { namespace: 'test', title: 'Source Doc', type: 'SOURCE', summary: 'source document' });
+    const results = executeQuery(db, "test where not (type = 'META' or type = 'SUMMARY')");
+    expect(results).toHaveLength(1);
+    expect(results[0].type).toBe('SOURCE');
+    expect(results[0].title).toBe('Source Doc');
+  });
+
+  it('AND with NOT', () => {
+    // All discoveries that are not tagged with 'auth'
+    const results = executeQuery(db, "discoveries where type = 'SOURCE' and not tag = 'auth'");
+    // Should exclude JWT Auth (tagged with 'auth')
+    expect(results.every(r => !r.tags.includes('auth'))).toBe(true);
+  });
+
+  it('double NOT returns original set', () => {
+    const withNot = executeQuery(db, "me where type = 'META'");
+    const withDoubleNot = executeQuery(db, "me where not not type = 'META'");
+    expect(withDoubleNot).toHaveLength(withNot.length);
+    expect(withDoubleNot[0].title).toBe(withNot[0].title);
+  });
+
+  it('NOT with IN operator', () => {
+    // Exclude records where type is in ('SUMMARY', 'META')
+    save(db, { namespace: 'test2', title: 'Collection', type: 'COLLECTION', summary: 'collection record' });
+    const results = executeQuery(db, "test2 where not type in ('SUMMARY', 'META')");
+    expect(results).toHaveLength(1);
+    expect(results[0].type).toBe('COLLECTION');
+  });
+
+  it('NOT with contains', () => {
+    // Exclude records containing 'token' in summary
+    const results = executeQuery(db, "discoveries where not contains = 'token'");
+    // Should exclude JWT Auth (contains 'tokens') and Rate Limiting (contains 'Token')
+    expect(results.every(r => !r.summary?.toLowerCase().includes('token'))).toBe(true);
+  });
 });

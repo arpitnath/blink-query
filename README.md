@@ -2,12 +2,12 @@
 
 **DNS-inspired knowledge resolution layer for AI agents**
 
-[![Tests](https://img.shields.io/badge/tests-66%20passing-success)]() [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
+[![Tests](https://img.shields.io/badge/tests-320%20passing-success)]() [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)]() [![License](https://img.shields.io/badge/license-MIT-blue)]() [![npm](https://img.shields.io/npm/v/blink-query)]()
 
-Blink sits between document ingestion (LlamaIndex) and AI agent consumption. It stores typed knowledge records with DNS-like resolution semantics.
+Blink sits between your data and your AI agent. It turns documents from anywhere — files, databases, web pages, git repos — into typed knowledge records with DNS-like resolution semantics.
 
 ```
-Files/APIs → [Ingestion] → Blink Records → [Resolution] → AI Agents
+Your Data → [Load → Store → Find] → Your Agent
 ```
 
 ---
@@ -21,13 +21,9 @@ npm install blink-query
 
 # Optional: for PDF/DOCX support
 npm install llamaindex @llamaindex/readers
-```
 
-### Testing & Experimentation
-
-```typescript
-// In-memory database for testing (no files created)
-const blink = new Blink({ dbPath: ':memory:' });
+# Optional: for PostgreSQL ingestion
+npm install pg
 ```
 
 ### Library API
@@ -50,6 +46,9 @@ console.log(response.record.summary);
 // Query with DSL
 const results = blink.query('knowledge where type = "SUMMARY" limit 5');
 
+// Search
+const found = blink.search('authentication jwt');
+
 blink.close();
 ```
 
@@ -65,9 +64,21 @@ blink resolve knowledge/readme
 # Search
 blink search "authentication api"
 
-# Query
+# Query with DSL
 blink query 'knowledge where tags contains "urgent" order by hit_count desc'
+
+# List records in a namespace
+blink list knowledge --limit 20 --offset 0
+
+# Manage zones
+blink zones
+
+# Move and delete
+blink move knowledge/old-path knowledge/new-path
+blink delete knowledge/outdated-doc
 ```
+
+All CLI commands support `--json` for machine-readable output and `--db` to target a specific database file.
 
 ### MCP Server (for AI agents)
 
@@ -76,47 +87,210 @@ blink serve
 # AI agent connects via stdio MCP protocol
 ```
 
+9 tools available: `blink_resolve`, `blink_save`, `blink_search`, `blink_list`, `blink_query`, `blink_get`, `blink_delete`, `blink_move`, `blink_zones`.
+
+### In-Memory Mode (for testing)
+
+```typescript
+const blink = new Blink({ dbPath: ':memory:' });
+```
+
 ---
 
 ## The 5 Record Types
 
-| Type | Description | Example |
-|------|-------------|---------|
-| **SUMMARY** | Read directly, no fetching | "Project roadmap Q1 2026 highlights" |
-| **META** | Structured metadata | `{ status: "active", contributors: 12 }` |
-| **COLLECTION** | List of child records | Table of contents, directory listings |
-| **SOURCE** | Summary + pointer to full content | Large files, external APIs |
-| **ALIAS** | Redirect to another path | Shortcuts, renames |
+| Type | What it tells the agent | Example |
+|------|------------------------|---------|
+| **SUMMARY** | Read this directly, you have what you need | Project overview, meeting notes |
+| **META** | Structured data, parse it | `{ status: "active", contributors: 12 }` |
+| **COLLECTION** | Browse children, pick what's relevant | Table of contents, directory listings |
+| **SOURCE** | Summary here, fetch source if you need depth | Large files, external APIs |
+| **ALIAS** | Follow the redirect to the real record | Shortcuts, renames |
 
 **Core innovation**: Type carries consumption instruction, content carries domain semantics.
 
 ---
 
-## Features
+## Data Sources
 
-- **DNS-inspired paths** — `projects/orpheus/readme`
-- **Auto-COLLECTION** — Resolving a namespace auto-generates child list
-- **ALIAS redirects** — Like DNS CNAME or symlinks
-- **TTL/freshness** — Records expire after configurable time
-- **Keyword search** — Full-text search with SQLite FTS
-- **Query DSL** — SQL-like filtering: `where`, `order by`, `limit`, `since`
-- **File ingestion** — Load docs from disk with LlamaIndex or basic fs walker
-- **Transaction safety** — All writes atomic via SQLite transactions
-- **MCP server** — AI agents connect via Model Context Protocol
+### Directory Ingestion
 
-### API Design
+```typescript
+await blink.ingestDirectory('./docs', {
+  summarize: extractiveSummarize(500),
+  namespacePrefix: 'docs',
+  maxFileSize: 1048576,    // 1MB limit (default)
+  includeHidden: false,     // skip dotfiles (default)
+  onProgress: ({ current, total, file }) => {
+    console.log(`${current}/${total}: ${file}`);
+  }
+});
+```
 
-All CRUD operations (`save`, `get`, `resolve`, `search`, `list`, `query`, `delete`, `move`) are **synchronous** — no `await` needed. Only ingestion methods (`ingest`, `ingestDirectory`) are async, since your summarizer callback may call an LLM.
+Supports 50+ file extensions out of the box. Skips empty files, hidden files, and files over the size limit automatically.
+
+### PostgreSQL Ingestion
+
+```typescript
+await blink.ingestFromPostgres({
+  connectionString: 'postgresql://localhost/mydb',
+  query: 'SELECT id, title, body FROM articles',
+  textColumn: 'body',
+  idColumn: 'id',
+  titleColumn: 'title'
+});
+```
+
+### Web Ingestion
+
+```typescript
+import { loadFromWeb } from 'blink-query';
+
+const docs = await loadFromWeb([
+  'https://example.com/docs/getting-started',
+  'https://example.com/docs/api-reference'
+]);
+await blink.ingest(docs, { namespacePrefix: 'web' });
+```
+
+### Git Ingestion
+
+```typescript
+import { loadFromGit } from 'blink-query';
+
+const docs = await loadFromGit({
+  repoPath: '/path/to/repo',
+  ref: 'main',
+  extensions: ['.md', '.ts']
+});
+await blink.ingest(docs, { namespacePrefix: 'repo' });
+```
+
+### LLM-Powered Summarization
+
+```typescript
+import { Blink, configureLLM } from 'blink-query';
+
+// Configure via environment variables:
+// BLINK_LLM_PROVIDER=openai
+// BLINK_LLM_MODEL=gpt-4o-mini
+// OPENAI_API_KEY=...
+
+const summarize = configureLLM();
+
+await blink.ingestDirectory('./docs', {
+  summarize,
+  namespacePrefix: 'knowledge'
+});
+```
+
+Or bring your own summarizer:
+
+```typescript
+await blink.ingest(docs, {
+  summarize: async (text, metadata) => {
+    // Call any LLM, return a string
+    return await myLLM.summarize(text);
+  }
+});
+```
+
+---
+
+## Query DSL
+
+SQL-like query language for filtering records:
+
+```
+namespace where field op value [and|or condition] [order by field asc|desc] [limit N] [offset N] [since "date"]
+```
+
+### Examples
+
+```bash
+# Filter by type
+blink query 'docs where type = "SUMMARY"'
+
+# Tag search
+blink query 'projects where tags contains "urgent" order by hit_count desc'
+
+# Boolean logic
+blink query 'docs where type = "SOURCE" and hit_count > 10'
+
+# NOT operator
+blink query 'docs where not type = "ALIAS"'
+
+# IN operator
+blink query 'docs where type in ("SUMMARY", "META")'
+
+# Pagination
+blink query 'docs where type = "SUMMARY" limit 10 offset 20'
+
+# Date filtering
+blink query 'docs since "2026-01-01"'
+```
+
+---
+
+## Resolution
+
+```typescript
+const response = blink.resolve('projects/orpheus/readme');
+
+switch (response.status) {
+  case 'OK':        // Record found
+  case 'STALE':     // Record found but TTL expired
+  case 'NXDOMAIN':  // Not found
+  case 'ALIAS_LOOP': // Circular alias detected
+}
+```
+
+Resolution follows DNS semantics:
+- Direct path lookup
+- ALIAS chains (up to 5 hops)
+- Auto-COLLECTION: resolving a namespace generates a listing of child records
+- TTL expiry: records past their TTL return with STALE status
+
+---
+
+## API Design
+
+All CRUD operations are **synchronous** — no `await` needed:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `resolve(path)` | `{ status, record }` | DNS-like path resolution |
+| `get(path)` | `record \| null` | Direct lookup |
+| `save(input)` | `record` | Create or update |
+| `delete(path)` | `boolean` | Remove a record |
+| `move(from, to)` | `record \| null` | Move/rename |
+| `search(query)` | `record[]` | FTS5 keyword search |
+| `list(namespace)` | `record[]` | List records in namespace |
+| `query(dsl)` | `record[]` | Query DSL filtering |
+
+Only ingestion methods (`ingest`, `ingestDirectory`, `ingestFromPostgres`) are async.
 
 ### Error Handling
 
-- `resolve()` returns a status object: `{ status: 'OK' | 'NXDOMAIN' | 'STALE' | 'ALIAS_LOOP', record }` — check `status` before using `record`
+- `resolve()` returns a status object — check `status` before using `record`
 - `get()` returns `null` if the path doesn't exist
 - `delete()` returns `false` if the record wasn't found
 - `move()` returns `null` if the source doesn't exist
 - `query()` throws on invalid query syntax
 - `save()` throws on invalid input (e.g., ALIAS without target)
-- All sync operations throw on database errors
+
+---
+
+## Input Validation
+
+All input is validated at the save boundary:
+
+- Namespaces: no path traversal (`..`), no special characters (`#`, `?`, `%`)
+- Titles: non-empty, trimmed
+- Content: max 10MB
+- Tags: deduplicated, cleaned
+- Record types: must be one of the 5 valid types
+- PostgreSQL WHERE clauses: checked for injection patterns
 
 ---
 
@@ -128,87 +302,39 @@ All CRUD operations (`save`, `get`, `resolve`, `search`, `list`, `query`, `delet
 ├─────────────┬───────────────┬──────────────┬───────────────┤
 │  Ingestion  │    Storage    │  Resolution  │  Consumption  │
 │             │               │              │               │
-│ LlamaIndex  │  SQLite DB    │  Resolver    │   Library     │
-│ Basic FS    │  better-sqlite│  Query DSL   │   CLI         │
-│ Custom      │  Transactions │  Auto-COLL   │   MCP Server  │
+│ Directory   │  SQLite DB    │  Resolver    │   Library     │
+│ PostgreSQL  │  FTS5 Search  │  Query DSL   │   CLI         │
+│ Web / Git   │  Transactions │  Auto-COLL   │   MCP Server  │
+│ LLM Summary│  Zones        │  ALIAS chain │   JSON output │
 └─────────────┴───────────────┴──────────────┴───────────────┘
 ```
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for full system design.
-
----
-
-## Examples
-
-### Ingest with LLM Summarizer
-
-```typescript
-import Anthropic from '@anthropic-ai/sdk';
-import { Blink, loadDirectory } from 'blink-query';
-
-const anthropic = new Anthropic();
-const blink = new Blink();
-
-// Load docs from disk
-const docs = await loadDirectory('./my-project');
-
-// Ingest with Claude summaries
-await blink.ingest(docs, {
-  summarize: async (text, metadata) => {
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 200,
-      messages: [{ role: 'user', content: `Summarize: ${text.slice(0, 4000)}` }]
-    });
-    return response.content[0].text;
-  },
-  classify: (text, metadata) => {
-    // Classify based on file type
-    if (metadata.file_name === 'README.md') return 'SUMMARY';
-    if (metadata.file_type === '.json') return 'META';
-    return 'SOURCE';
-  }
-});
-```
-
-### Resolution in AI Agent
-
-```typescript
-const response = blink.resolve('projects/orpheus');
-
-if (response.status === 'OK') {
-  const record = response.record;
-
-  if (record.type === 'SUMMARY') {
-    // Direct consumption
-    console.log(record.summary);
-  } else if (record.type === 'SOURCE') {
-    // Check summary, fetch full content if needed
-    console.log(record.summary);
-    const fullContent = await fetchFromSource(record.sources[0]);
-  } else if (record.type === 'COLLECTION') {
-    // Browse children
-    const children = record.content as Array<{ path: string, title: string }>;
-    console.log(`Contains ${children.length} documents`);
-  }
-}
-```
+See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for a full plain-language guide.
 
 ---
 
 ## Development
 
 ```bash
-# Install
+# Install dependencies
 npm install
 
-# Build
+# Build (parser + library + CLI)
 npm run build
 
-# Test
+# Run tests (excludes integration tests)
 npm test
 
-# CLI (dev)
+# Run all tests (including PostgreSQL integration)
+npm run test:all
+
+# Build PEG parser only
+npm run build:parser
+
+# Pack for inspection before publishing
+npm pack --dry-run
+
+# CLI (dev mode)
 node dist/index.js --help
 ```
 
@@ -219,45 +345,15 @@ node dist/index.js --help
 - **Agent memory** — Store conversation context with semantic types
 - **Project knowledge base** — Ingest codebases, docs, wikis
 - **API caching** — Cache API responses with TTL
-- **Task management** — Organize tasks with COLLECTION records
 - **Research notes** — Structure knowledge with namespaces
 - **Configuration** — Store settings as META records
 
 ---
 
-## Performance
-
-- **Bulk ingestion**: 50K records in 2-8 seconds (with transactions)
-- **Resolution**: ~1ms direct lookup, ~5-10ms auto-COLLECTION
-- **Search**: ~10-20ms keyword search with 3 terms
-- **Database**: Embedded SQLite, single file, zero config
-
----
-
-## Positioning
-
-Blink is a **resolution layer**, not:
-- ❌ Vector database (use Pinecone/Weaviate)
-- ❌ Document store (use MongoDB)
-- ❌ Full-text search engine (use Elasticsearch)
-- ❌ Graph database (use Neo4j)
-
-Blink is lightweight, fast, and focused on typed knowledge resolution for AI agents.
-
----
-
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE)
 
 ---
 
-## Documentation
-
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — Full system design
-- [CLAUDE.md](./CLAUDE.md) — Capsule Kit integration (for Claude Code)
-- [`/test-agent/`](./test-agent/) — Usage examples with Anthropic SDK
-
----
-
-**Questions?** Open an issue or check the [architecture docs](./ARCHITECTURE.md).
+**Questions?** [Open an issue](https://github.com/arpitnath/blink-query/issues) or read the [architecture docs](./docs/ARCHITECTURE.md).

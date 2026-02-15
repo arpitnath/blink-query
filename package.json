@@ -15,9 +15,25 @@
   "bin": {
     "blink": "dist/index.js"
   },
+  "license": "MIT",
+  "author": "Arpit",
+  "keywords": [
+    "ai", "agents", "knowledge", "mcp", "model-context-protocol",
+    "sqlite", "resolution", "dns", "fts5", "ingestion", "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arpitnath/blink-query.git"
+  },
+  "homepage": "https://github.com/arpitnath/blink-query#readme",
+  "bugs": {
+    "url": "https://github.com/arpitnath/blink-query/issues"
+  },
   "files": [
     "dist/",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build:parser": "peggy --format es -o src/grammar/query-parser.js src/grammar/query.peggy",

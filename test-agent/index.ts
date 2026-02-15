@@ -14,9 +14,13 @@ import { mcpTools } from "@anthropic-ai/sdk/helpers/beta/mcp";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "REMOVED";
-const BUN_PATH = process.env.BUN_PATH || "/Users/arpit/.bun/bin/bun";
-const BLINK_ENTRY = process.env.BLINK_ENTRY || "/Users/arpit/Desktop/playground2.0/blink-query/dist/index.js";
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+if (!ANTHROPIC_API_KEY) {
+  console.error("ANTHROPIC_API_KEY environment variable is required");
+  process.exit(1);
+}
+const BUN_PATH = process.env.BUN_PATH || "bun";
+const BLINK_ENTRY = process.env.BLINK_ENTRY || "./dist/index.js";
 
 const SYSTEM_PROMPT = `You are a test agent validating Blink, a DNS-inspired knowledge resolution system.
 You have access to Blink tools via MCP. Use them to answer user questions.

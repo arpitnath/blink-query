@@ -322,7 +322,7 @@ export async function processDocuments(
 ): Promise<IngestResult> {
   const start = Date.now();
   const concurrency = options.concurrency || 5;
-  const results: SaveInput[] = [];
+  const records: BlinkRecord[] = [];
   const errors: Array<{ document: IngestDocument; error: Error }> = [];
 
   for (let i = 0; i < docs.length; i += concurrency) {
@@ -331,9 +331,10 @@ export async function processDocuments(
       batch.map(doc => documentToSaveInput(doc, options)),
     );
 
+    const batchInputs: SaveInput[] = [];
     settled.forEach((result, idx) => {
       if (result.status === 'fulfilled') {
-        results.push(result.value);
+        batchInputs.push(result.value);
       } else {
         errors.push({
           document: batch[idx],
@@ -344,9 +345,20 @@ export async function processDocuments(
         });
       }
     });
-  }
 
-  const records = results.length > 0 ? blink.saveMany(results) : [];
+    if (batchInputs.length > 0) {
+      const saved = blink.saveMany(batchInputs);
+      records.push(...saved);
+    }
+
+    if (options.onBatchComplete) {
+      options.onBatchComplete({
+        processed: Math.min(i + batch.length, docs.length),
+        total: docs.length,
+        batchSize: batchInputs.length,
+      });
+    }
+  }
 
   return { records, errors, total: docs.length, elapsed: Date.now() - start };
 }

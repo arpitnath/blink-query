@@ -160,6 +160,8 @@ export interface IngestOptions {
   deriveTags?: DeriveTagsCallback;
   /** Optional: custom source reference builder callback */
   buildSources?: BuildSourcesCallback;
+  /** Optional: callback fired after each batch is saved, useful for progress reporting */
+  onBatchComplete?: (info: { processed: number; total: number; batchSize: number }) => void;
 }
 
 /** Result of an ingest operation */

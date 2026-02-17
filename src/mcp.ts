@@ -59,7 +59,8 @@ const TOOLS = [
       properties: {
         keywords: { type: 'string', description: 'Space-separated keywords' },
         namespace: { type: 'string', description: 'Limit search to this namespace' },
-        limit: { type: 'integer', description: 'Max results (default: 10)' },
+        limit: { type: 'integer', description: 'Max results (default: 10, max: 200)' },
+        offset: { type: 'integer', description: 'Number of results to skip (default: 0)' },
       },
       required: ['keywords'],
     },
@@ -72,6 +73,8 @@ const TOOLS = [
       properties: {
         namespace: { type: 'string', description: "Namespace to list, e.g. 'projects/' or 'knowledge/'" },
         sort: { type: 'string', enum: ['recent', 'hits', 'title'], description: 'Sort order (default: recent)' },
+        limit: { type: 'integer', description: 'Max results (default: 50, max: 200)' },
+        offset: { type: 'integer', description: 'Number of results to skip (default: 0)' },
       },
       required: ['namespace'],
     },
@@ -207,8 +210,10 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
         if (namespace && namespace.length > MAX_PATH_LENGTH) {
           throw new McpError(ErrorCode.InvalidParams, `namespace exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
         }
-        const results = blink.search(keywordsStr, { namespace, limit: (args?.limit as number) || 10 });
-        return jsonResponse({ count: results.length, results });
+        const limit = Math.min((args?.limit as number) || 10, 200);
+        const offset = (args?.offset as number) || 0;
+        const results = blink.search(keywordsStr, { namespace, limit, offset });
+        return jsonResponse({ count: results.length, results, offset, limit });
       }
 
       case 'blink_list': {
@@ -217,8 +222,10 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
         if (namespace.length > MAX_PATH_LENGTH) {
           throw new McpError(ErrorCode.InvalidParams, `namespace exceeds maximum length of ${MAX_PATH_LENGTH} characters`);
         }
-        const results = blink.list(namespace, (args?.sort as 'recent' | 'hits' | 'title') || 'recent');
-        return jsonResponse({ count: results.length, results });
+        const limit = Math.min((args?.limit as number) || 50, 200);
+        const offset = (args?.offset as number) || 0;
+        const results = blink.list(namespace, (args?.sort as 'recent' | 'hits' | 'title') || 'recent', { limit, offset });
+        return jsonResponse({ count: results.length, results, offset, limit });
       }
 
       case 'blink_query': {

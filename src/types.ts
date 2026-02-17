@@ -77,6 +77,7 @@ export interface QueryCondition {
 export interface ResolveResponse {
   status: 'OK' | 'NXDOMAIN' | 'STALE' | 'ALIAS_LOOP';
   record: BlinkRecord | null;
+  suggestions?: Array<{ path: string; title: string; type: RecordType }>;
 }
 
 // Input for save operations

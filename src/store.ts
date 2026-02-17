@@ -415,6 +415,17 @@ export function saveMany(db: Database, inputs: SaveInput[]): BlinkRecord[] {
   return paths.map(path => getByPath(db, path)!);
 }
 
+export function countByNamespace(db: Database, ns: string): number {
+  const row = db.prepare('SELECT COUNT(*) as c FROM records WHERE namespace = ?').get(ns) as { c: number };
+  return row.c;
+}
+
+export function findSuggestions(db: Database, pathPrefix: string, parentNs: string): Array<{ path: string; title: string; type: string }> {
+  return db.prepare(
+    'SELECT path, title, type FROM records WHERE path LIKE ? OR namespace = ? ORDER BY hit_count DESC LIMIT 5'
+  ).all(pathPrefix + '%', parentNs) as Array<{ path: string; title: string; type: string }>;
+}
+
 // Query records by namespace prefix (for query executor)
 export function queryRecords(
   db: Database,

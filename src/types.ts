@@ -90,6 +90,8 @@ export interface SaveInput {
   tags?: string[];
   ttl?: number;
   sources?: Source[];
+  /** If true, skip the update when content hash is unchanged (idempotent saves) */
+  skipIfUnchanged?: boolean;
 }
 
 // ─── Ingestion types ────────────────────────────────────────

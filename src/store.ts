@@ -114,6 +114,10 @@ export function initDB(dbPath?: string): Database {
   const db = new Database(path);
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
+  db.pragma('synchronous = NORMAL');
+  db.pragma('cache_size = -64000');
+  db.pragma('mmap_size = 268435456');
+  db.pragma('temp_store = MEMORY');
   migrateFTS(db);
   return db;
 }
@@ -289,9 +293,14 @@ function saveInner(db: Database, input: SaveInput): string {
   }
 
   // Check for existing record at this path
-  const existing = db.prepare('SELECT id FROM records WHERE path = ?').get(path) as { id: string } | null;
+  const existing = db.prepare('SELECT id, content_hash FROM records WHERE path = ?').get(path) as { id: string; content_hash: string } | null;
 
   if (existing) {
+    // Skip update if content hasn't changed
+    if (cleanedInput.skipIfUnchanged && existing.content_hash === hash) {
+      return path; // No-op — content unchanged
+    }
+
     // Update existing
     db.prepare(`
       UPDATE records SET
@@ -418,6 +427,31 @@ export function saveMany(db: Database, inputs: SaveInput[]): BlinkRecord[] {
 export function countByNamespace(db: Database, ns: string): number {
   const row = db.prepare('SELECT COUNT(*) as c FROM records WHERE namespace = ?').get(ns) as { c: number };
   return row.c;
+}
+
+/**
+ * Evict records that have exceeded their TTL.
+ * Only records with ttl > 0 are eligible; ttl=0 means "never expire".
+ * Returns the number of records deleted.
+ */
+export function evictStale(db: Database): number {
+  const staleRecords = db.prepare(`
+    SELECT path, namespace FROM records
+    WHERE ttl > 0 AND (unixepoch('now') - unixepoch(updated_at)) > ttl
+  `).all() as Array<{ path: string; namespace: string }>;
+
+  if (staleRecords.length === 0) return 0;
+
+  const doEvict = db.transaction(() => {
+    for (const record of staleRecords) {
+      db.prepare('DELETE FROM records_fts WHERE record_path = ?').run(record.path);
+      db.prepare('DELETE FROM records WHERE path = ?').run(record.path);
+      incrementZoneCount(db, record.namespace, -1);
+    }
+  });
+  doEvict();
+
+  return staleRecords.length;
 }
 
 export function findSuggestions(db: Database, pathPrefix: string, parentNs: string): Array<{ path: string; title: string; type: string }> {

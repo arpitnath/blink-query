@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug } from './store.js';
+import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug, evictStale } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
 import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS } from './ingest.js';
@@ -179,6 +179,11 @@ export class Blink {
   async ingestFromGit(config: GitLoadConfig, options: IngestOptions): Promise<IngestResult> {
     const docs = await loadFromGit(config);
     return this.ingest(docs, options);
+  }
+
+  /** Evict records that have exceeded their TTL */
+  evict(): number {
+    return evictStale(this.db);
   }
 
   /** Close the database connection */

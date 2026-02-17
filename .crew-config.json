@@ -1,38 +1,24 @@
 {
   "team": {
-    "name": "blink-hardening",
+    "name": "blink-p1",
     "lead": { "model": "sonnet" },
     "teammates": [
       {
-        "name": "agent-security",
-        "branch": "fix/validation",
+        "name": "agent-store",
+        "branch": "fix/store-perf",
         "worktree": true,
         "role": "developer",
-        "focus": "Create src/validation.ts with all validation functions (namespace, title, TTL, content size, tags, RecordType, PG identifiers, git ref, web URL SSRF). Fix progressive where clause SQL injection. Cap keyword search to 50. Fix MCP COLLECTION enum. Call validation from save() boundary in store.ts. Add tests."
+        "focus": "Three store improvements: (1) Add SQLite performance pragmas to initDB. (2) Add skipIfUnchanged to saveInner — skip update when content_hash matches. (3) Add TTL eviction sweep method. Add tests for all three."
       },
       {
-        "name": "agent-query",
-        "branch": "feat/query-dsl",
+        "name": "agent-github",
+        "branch": "feat/github-adapter",
         "worktree": true,
         "role": "developer",
-        "focus": "Update PEG grammar with OR operator, IN operator, OFFSET clause. Update QueryAST types (WhereExpr tree instead of flat array). Update query executor for recursive SQL generation. Fix STALE status in resolver (TTL check). Add tests for all new operators and pagination."
-      },
-      {
-        "name": "agent-fts5",
-        "branch": "feat/fts5",
-        "worktree": true,
-        "role": "developer",
-        "focus": "Migrate keyword search from keywords table to FTS5 virtual table. Add FTS5 schema with triggers for sync. Replace searchByKeywords() to use FTS5 MATCH with bm25 ranking. Remove extractKeywords/indexKeywords/removeKeywords. Support porter stemming. Add migration function for existing data. Update tests."
-      },
-      {
-        "name": "agent-mcp",
-        "branch": "feat/mcp-tools",
-        "worktree": true,
-        "role": "developer",
-        "focus": "Add blink_get, blink_delete, blink_move, blink_zones MCP tools. Add runtime RecordType validation (replace as any cast). Add MCP input length limits. Fix progressive pipeline to ingest per-batch instead of accumulating. Add tests."
+        "focus": "Build a GitHub Issues adapter: loadFromGitHubIssues() that fetches issues via GitHub REST API and maps them to IngestDocuments. Add GitHub-specific derivers. Add types. Add tests."
       }
     ]
   },
-  "project": { "main_branch": "main" },
+  "project": { "main_branch": "feat/v1.1-scale" },
   "stale_after_hours": 4
 }

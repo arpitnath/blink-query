@@ -1,0 +1,19 @@
+{
+  "name": "pathfinder",
+  "version": "0.1.0",
+  "description": "Knowledge resolution agent powered by blink-query and pi-ai",
+  "type": "module",
+  "scripts": {
+    "smoke": "npx tsx src/smoke.ts",
+    "agent": "npx tsx src/agent.ts"
+  },
+  "dependencies": {
+    "blink-query": "file:../..",
+    "@mariozechner/pi-ai": "^0.53.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  }
+}

@@ -263,6 +263,50 @@ export const GIT_DERIVERS = {
   buildSources: gitSources,
 } as const;
 
+// ─── GitHub derivers (for GitHub Issues data) ────────────────
+
+export function githubNamespace(metadata: Record<string, unknown>): string {
+  const repo = (metadata.repo as string) || 'unknown';
+  const labels = metadata.labels as string[] | undefined;
+  const firstLabel = labels && labels.length > 0 ? labels[0] : 'unlabeled';
+  // Sanitize label for path use
+  const safeLabel = firstLabel.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+  return `github/${repo}/issues/${safeLabel}`;
+}
+
+export function githubTitle(metadata: Record<string, unknown>): string {
+  return (metadata.title as string) || `issue-${metadata.issue_number}`;
+}
+
+export function githubTags(metadata: Record<string, unknown>, extraTags?: string[]): string[] {
+  const tags: string[] = ['github'];
+  const labels = metadata.labels as string[] | undefined;
+  if (labels) tags.push(...labels);
+  const repo = metadata.repo as string | undefined;
+  if (repo) tags.push(repo.split('/').pop() || repo);
+  const state = metadata.state as string | undefined;
+  if (state) tags.push(state);
+  if (extraTags) tags.push(...extraTags);
+  return [...new Set(tags.map(t => t.toLowerCase()))];
+}
+
+export function githubSources(metadata: Record<string, unknown>): Source[] {
+  const htmlUrl = metadata.html_url as string | undefined;
+  return [{
+    type: 'web',
+    url: htmlUrl,
+    last_fetched: new Date().toISOString(),
+  }];
+}
+
+/** Preset derivers for GitHub Issues data. */
+export const GITHUB_DERIVERS = {
+  deriveNamespace: githubNamespace,
+  deriveTitle: githubTitle,
+  deriveTags: githubTags,
+  buildSources: githubSources,
+} as const;
+
 // ─── Resolve namespace with prefix/override ─────────────────
 
 function resolveNamespace(

@@ -281,6 +281,24 @@ export interface GitLoadConfig {
   maxFileSize?: number;
 }
 
+/** Configuration for loading documents from GitHub Issues */
+export interface GitHubLoadConfig {
+  /** GitHub repo in 'owner/repo' format, e.g. 'vercel/next.js' */
+  repo: string;
+  /** GitHub personal access token (defaults to GITHUB_TOKEN env var) */
+  token?: string;
+  /** Filter by issue state (default: 'all') */
+  state?: 'open' | 'closed' | 'all';
+  /** Filter by label names */
+  labels?: string[];
+  /** Results per page (default: 100, max 100 per GitHub API) */
+  perPage?: number;
+  /** Maximum pages to fetch (default: 10) */
+  maxPages?: number;
+  /** Progress callback fired after each page */
+  onPage?: (pageNumber: number, totalFetched: number) => void;
+}
+
 /** Configuration for LLM-powered summarization and classification. */
 export interface LLMConfig {
   /** LLM provider (default: 'openai'). Extensible for future providers. */

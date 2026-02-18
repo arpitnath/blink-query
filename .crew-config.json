@@ -1,21 +1,21 @@
 {
   "team": {
-    "name": "blink-p1",
+    "name": "pathfinder-build",
     "lead": { "model": "sonnet" },
     "teammates": [
       {
-        "name": "agent-store",
-        "branch": "fix/store-perf",
+        "name": "agent-data",
+        "branch": "feat/pathfinder-data",
         "worktree": true,
         "role": "developer",
-        "focus": "Three store improvements: (1) Add SQLite performance pragmas to initDB. (2) Add skipIfUnchanged to saveInner — skip update when content_hash matches. (3) Add TTL eviction sweep method. Add tests for all three."
+        "focus": "Build src/ingest.ts (GitHub → blink.db + vectra index) and src/rag.ts (pure TS RAG engine) in examples/pathfinder/"
       },
       {
-        "name": "agent-github",
-        "branch": "feat/github-adapter",
+        "name": "agent-agents",
+        "branch": "feat/pathfinder-agents",
         "worktree": true,
         "role": "developer",
-        "focus": "Build a GitHub Issues adapter: loadFromGitHubIssues() that fetches issues via GitHub REST API and maps them to IngestDocuments. Add GitHub-specific derivers. Add types. Add tests."
+        "focus": "Build src/agent-blink.ts (blink-first agent with learning cache) and src/agent-rag.ts (RAG wrapper) in examples/pathfinder/"
       }
     ]
   },

@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "smoke": "npx tsx src/smoke.ts",
-    "agent": "npx tsx src/agent.ts"
+    "agent": "npx tsx src/agent.ts",
+    "ingest": "npx tsx src/ingest.ts",
+    "agent:blink": "npx tsx src/agent-blink.ts",
+    "agent:rag": "npx tsx src/agent-rag.ts"
   },
   "dependencies": {
     "blink-query": "file:../..",
-    "@mariozechner/pi-ai": "^0.53.0"
+    "@mariozechner/pi-ai": "^0.53.0",
+    "vectra": "^0.12.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

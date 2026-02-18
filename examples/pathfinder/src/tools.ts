@@ -56,6 +56,12 @@ export const blinkTools: Tool[] = [
       namespace: Type.String({ description: "Namespace to list, e.g. 'support/' or 'projects/'" }),
     }),
   },
+  {
+    name: 'blink_zones',
+    description:
+      'List all top-level namespaces (zones) in the knowledge base. Use this first to discover what domains of knowledge exist before resolving or searching.',
+    parameters: Type.Object({}),
+  },
 ];
 
 // --- Tool executor ---
@@ -65,6 +71,16 @@ export function createBlinkExecutor(blink: Blink) {
     switch (name) {
       case 'blink_resolve': {
         const result = blink.resolve(args.path as string);
+        if (result.status === 'NXDOMAIN') {
+          return JSON.stringify({
+            status: 'NXDOMAIN',
+            message: `No record found at "${args.path as string}"`,
+            suggestions: result.suggestions ?? [],
+          });
+        }
+        if (result.status === 'ALIAS_LOOP') {
+          return JSON.stringify({ status: 'ALIAS_LOOP', message: 'Circular alias chain detected' });
+        }
         return JSON.stringify(result, null, 2);
       }
 
@@ -102,6 +118,19 @@ export function createBlinkExecutor(blink: Blink) {
             path: r.path,
             title: r.title,
             type: r.type,
+          })),
+          null,
+          2,
+        );
+      }
+
+      case 'blink_zones': {
+        const zones = blink.zones();
+        return JSON.stringify(
+          zones.map((z) => ({
+            path: z.path,
+            record_count: z.record_count,
+            last_modified: z.last_modified,
           })),
           null,
           2,

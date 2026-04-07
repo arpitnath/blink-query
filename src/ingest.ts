@@ -597,6 +597,105 @@ export async function processDocuments(
   return { records, errors, total: docs.length, elapsed: Date.now() - start };
 }
 
+// ─── Wikilink extraction ───────────────────────────────────
+
+/**
+ * Matches `[[target]]` and `[[target|display text]]` patterns in markdown.
+ * Captures the target text (group 1), discards the optional display alias.
+ */
+const WIKILINK_RE = /\[\[([^\]|\n]+?)(?:\|[^\]\n]*)?\]\]/g;
+
+/** Minimal blink-shaped interface for wikilink extraction. */
+export interface WikiLinkExtractorBlink {
+  search(keywords: string, options?: { limit?: number }): BlinkRecord[];
+  saveMany(inputs: SaveInput[]): BlinkRecord[];
+}
+
+export interface ExtractWikiLinksResult {
+  /** Number of ALIAS records created. */
+  aliasesCreated: number;
+  /** Target text that did not resolve to any record (skipped, no ALIAS made). */
+  unresolvedLinks: string[];
+  /** The created ALIAS records. */
+  aliases: BlinkRecord[];
+}
+
+/**
+ * Scan saved records' summaries for `[[wikilinks]]` and create ALIAS records
+ * for each resolved target.
+ *
+ * For each record with a non-empty summary, all `[[X]]` and `[[X|display]]`
+ * patterns are extracted and deduped per source record. For each unique
+ * target, a keyword search is run against the existing blink store. If a
+ * record matches, an ALIAS is created at:
+ *
+ *   `<source.namespace>/aliases/<target>` → target=`<found.path>`
+ *
+ * Targets that do not resolve are reported in `unresolvedLinks` and no ALIAS
+ * is created — wikilinks are forward references and missing targets are not
+ * an error condition.
+ */
+export function extractWikiLinks(
+  blink: WikiLinkExtractorBlink,
+  records: BlinkRecord[],
+): ExtractWikiLinksResult {
+  const aliasInputs: SaveInput[] = [];
+  const unresolvedLinks: string[] = [];
+  const seenAliases = new Set<string>(); // dedup by namespace+title
+
+  for (const record of records) {
+    if (!record.summary) continue;
+    if (record.type === 'ALIAS') continue; // never extract from an alias
+
+    const seenTargets = new Set<string>();
+    WIKILINK_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = WIKILINK_RE.exec(record.summary)) !== null) {
+      const targetText = match[1].trim();
+      if (!targetText || seenTargets.has(targetText.toLowerCase())) continue;
+      seenTargets.add(targetText.toLowerCase());
+
+      // Try to find a target by keyword search; filter out self-references.
+      let candidates: BlinkRecord[] = [];
+      try {
+        candidates = blink.search(targetText, { limit: 5 });
+      } catch {
+        // Search failure is non-fatal — treat as unresolved
+        candidates = [];
+      }
+      const targets = candidates.filter(c => c.path !== record.path);
+
+      if (targets.length === 0) {
+        unresolvedLinks.push(targetText);
+        continue;
+      }
+
+      // ALIAS lives under the source record's path, not its bare namespace.
+      // record.path = "sources/mcp-spec" → alias namespace = "sources/mcp-spec/aliases"
+      const aliasNamespace = `${record.path}/aliases`;
+      const dedupKey = `${aliasNamespace}|${targetText.toLowerCase()}`;
+      if (seenAliases.has(dedupKey)) continue;
+      seenAliases.add(dedupKey);
+
+      aliasInputs.push({
+        namespace: aliasNamespace,
+        title: targetText,
+        type: 'ALIAS',
+        content: { target: targets[0].path },
+        tags: ['wiki', 'wikilink'],
+      });
+    }
+  }
+
+  const aliases = aliasInputs.length > 0 ? blink.saveMany(aliasInputs) : [];
+
+  return {
+    aliasesCreated: aliases.length,
+    unresolvedLinks,
+    aliases,
+  };
+}
+
 // ─── Directory loading ──────────────────────────────────────
 
 export interface LoadDirectoryOptions {

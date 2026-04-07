@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug, evictStale } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
-import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS, GITHUB_DERIVERS } from './ingest.js';
+import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS, GITHUB_DERIVERS, extractWikiLinks } from './ingest.js';
 import { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, loadFromGitHubIssues, introspectPostgresTable, pickTextColumn } from './adapters.js';
 import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig, GitHubLoadConfig } from './types.js';
 
@@ -75,7 +75,13 @@ export class Blink {
 
   /** Ingest documents (from LlamaIndex or any loader) into Blink records */
   async ingest(docs: IngestDocument[], options: IngestOptions): Promise<IngestResult> {
-    return processDocuments(this, docs, options);
+    const result = await processDocuments(this, docs, options);
+    if (options.extractLinks) {
+      const links = extractWikiLinks(this, result.records);
+      result.aliasesCreated = links.aliasesCreated;
+      result.unresolvedLinks = links.unresolvedLinks;
+    }
+    return result;
   }
 
   /** Load and ingest a directory in one call. Uses LlamaIndex if installed, else basic fs loader. */
@@ -210,7 +216,8 @@ export type {
 } from './types.js';
 
 // Re-export ingestion helpers
-export { loadDirectory, extractiveSummarize } from './ingest.js';
+export { loadDirectory, extractiveSummarize, extractWikiLinks } from './ingest.js';
+export type { ExtractWikiLinksResult, WikiLinkExtractorBlink } from './ingest.js';
 
 // Re-export preset derivers
 export {

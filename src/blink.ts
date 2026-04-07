@@ -224,6 +224,8 @@ export {
   gitNamespace, gitTitle, gitTags, gitSources,
   GITHUB_DERIVERS,
   githubNamespace, githubTitle, githubTags, githubSources,
+  WIKI_DERIVERS,
+  wikiClassify, wikiNamespace, wikiTitle, wikiTags, wikiSources,
 } from './ingest.js';
 
 // Re-export adapter functions

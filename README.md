@@ -33,7 +33,7 @@ The production-scale numbers below come from the v1.1.0 pathfinder benchmark: 3,
 
 **~15× faster retrieval, and the blink side *learns* across queries** — records re-resolve in O(1) after the first hit. Full tables, per-question breakdown, and the learning-cache pass are in [`examples/pathfinder/src/benchmark.ts`](examples/pathfinder/src/benchmark.ts).
 
-A smaller wiki-specific retrieval comparison (recursive grep vs blink BM25 on 30 curated markdown files) ships in [`examples/llm-wiki/benchmark/`](examples/llm-wiki/benchmark/). Both baselines run locally with only Node installed — see [`examples/llm-wiki/benchmark/RESULTS.md`](examples/llm-wiki/benchmark/RESULTS.md).
+A smaller wiki-specific retrieval comparison (recursive grep vs blink BM25 on a 32-record MCP ecosystem corpus) ships in [`examples/llm-wiki/benchmark/`](examples/llm-wiki/benchmark/): grep averages ~21 ms per query and returns every file containing any keyword (broad); blink averages <1 ms per query and returns top-5 ranked typed records (focused). Both baselines run locally with only Node installed — see [`examples/llm-wiki/benchmark/RESULTS.md`](examples/llm-wiki/benchmark/RESULTS.md).
 
 ---
 

@@ -45,27 +45,37 @@ npm run bench:blink
 - **synthesis** (4) — questions requiring content from multiple sources
 - **browse** (3) — questions answered by namespace navigation
 
-## Results (committed)
+## Results
 
-_The numbers below are filled in by running `npm run benchmark` on the local
-machine. The grep baseline uses macOS grep; results on Linux with GNU grep or
-ripgrep will differ in absolute terms but the relative ordering is stable._
+Captured on Darwin arm64 (Apple Silicon), Node v22.22, better-sqlite3 12.x,
+macOS grep. 15 questions against the 32-record corpus. Reproduce locally
+with `npm run benchmark`.
 
 ### Retrieval timing (per query, averaged across 15 questions)
 
-| Baseline | Avg query time | Matched files | Notes |
-|---|---|---|---|
-| grep (recursive) | _run locally_ | _run locally_ | O(corpus size); every query re-scans the filesystem |
-| blink (FTS5 BM25) | _run locally_ | _run locally_ | Single SQL query against the FTS5 index |
+| Baseline | Avg query time | Total time (15 q) | Top-hit shape | Notes |
+|---|---|---|---|---|
+| grep (recursive) | **~21 ms** | 320 ms | Matches every file containing any keyword (broad) | O(corpus size) — every query re-scans the filesystem |
+| blink (FTS5 BM25) | **<1 ms** | 4 ms | Top-5 ranked records, typed (focused) | One SQL query against the FTS5 index |
+
+**~20× faster, and the results are focused rather than broad.** Grep returns 351
+file matches across 15 questions — every file that contains any keyword.
+blink returns 75 ranked top-5 hits — the records most relevant to each query,
+with their record type so the agent knows what to do with each one.
 
 ### How to interpret this
 
 - **grep** is the simplest possible retrieval: no index, no preprocessing, no
-  database. Every query walks the full corpus. It's fast on a 30-file corpus
-  but scales linearly with corpus size.
-- **blink** precomputes an FTS5 index at ingest time. Queries hit the index,
-  not the filesystem. The cost is the one-time ingest, but per-query latency
-  is stable as the corpus grows.
+  database. Every query walks the full corpus with `grep -r -l -i`. Per-query
+  latency grows linearly with corpus size. Results are file paths only; the
+  caller still has to open and read each match.
+- **blink** precomputes an FTS5 index at ingest time (one-time cost: ~24 ms
+  for 32 records). Queries hit the index, not the filesystem. Per-query
+  latency is stable as the corpus grows. Results are typed records — the
+  caller gets the title, summary, type, and path without touching disk.
+
+The grep numbers will differ on other platforms (Linux with GNU grep or
+ripgrep is typically faster), but the relative ordering is stable.
 
 For the production-scale comparison (3,890 GitHub issues, blink-query vs a
 vectra-based RAG pipeline with local Ollama), see `examples/pathfinder/` and

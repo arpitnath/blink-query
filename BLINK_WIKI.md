@@ -58,6 +58,55 @@ Examples:
 
 You can use any namespace structure. The conventions above are a starting point.
 
+### Registering custom zones
+
+If you want a zone to enforce policies — required tags on every record, a default TTL — register it explicitly with `blink_create_zone` (or `Blink.createZone()` in code). Zones are top-level namespaces; metadata applies to every record saved under that prefix.
+
+```json
+// via MCP
+{
+  "tool": "blink_create_zone",
+  "arguments": {
+    "namespace": "adr",
+    "description": "Architecture decision records",
+    "defaultTtl": 31536000,
+    "requiredTags": ["adr", "status"]
+  }
+}
+```
+
+After registration:
+- Any `blink_save` into `adr/*` without both `adr` and `status` tags will throw.
+- Any `blink_save` into `adr/*` without an explicit `ttl` will use the zone's `defaultTtl`.
+- `blink_zones` lists the zone with its description, default TTL, and required tags.
+
+This is useful when an agent owns a portion of the wiki and wants guarantees — for example, requiring every entry in `decisions/` to carry a status tag, or making `cache/` records expire in 10 minutes by default.
+
+### Custom top-level directories (`createWikiNamespace`)
+
+The built-in wiki routing handles `sources/`, `entity/`, `topics/`, and `log/{date}/`. To add more (e.g. `decisions/`, `adr/`, `people/`), use the `createWikiNamespace` factory in code:
+
+```typescript
+import { WIKI_DERIVERS, createWikiNamespace } from 'blink-query';
+
+const MY_DERIVERS = {
+  ...WIKI_DERIVERS,
+  deriveNamespace: createWikiNamespace({
+    decisions: 'decisions/{dir}',         // decisions/q1-2026/foo.md → decisions/q1-2026
+    adr:       'adr',                     // adr/0001-use-sqlite.md → adr
+    people:    'people/{slug(dir)}',      // people/Alice Smith/bio.md → people/alice-smith
+  }),
+};
+
+await blink.ingestDirectory('./wiki', MY_DERIVERS);
+```
+
+Template placeholders:
+- `{dir}` — the next path segment after the top-level directory, literal
+- `{slug(dir)}` — the next path segment, slugified (lowercase, punctuation stripped)
+
+Unmatched top-level directories fall back to the default wiki routing, so you can add custom patterns without losing the built-in behaviour. Frontmatter `namespace:` overrides still win over everything.
+
 ---
 
 ## The five record types

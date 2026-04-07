@@ -102,7 +102,7 @@ BLINK_DB_PATH = "~/.blink/blink.db"
 
 **nvm users:** if Claude Desktop can't find `npx`, use `blink init --absolute-node` which writes the absolute path to your node binary instead of `npx`. This avoids the "doesn't source shell rc" issue.
 
-The MCP server exposes 10 tools: `blink_resolve`, `blink_save`, `blink_search`, `blink_list`, `blink_query`, `blink_get`, `blink_delete`, `blink_move`, `blink_zones`, `blink_ingest`.
+The MCP server exposes 11 tools: `blink_resolve`, `blink_save`, `blink_search`, `blink_list`, `blink_query`, `blink_get`, `blink_delete`, `blink_move`, `blink_zones`, `blink_create_zone`, `blink_ingest`.
 
 Drop [`BLINK_WIKI.md`](BLINK_WIKI.md) into your project root (or add it to your agent's system prompt) so the agent knows how to use the wiki pattern.
 

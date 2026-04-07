@@ -7,8 +7,15 @@ All notable changes to this project will be documented in this file.
 ### Wiki Pattern Support
 - `WIKI_DERIVERS` preset for ingesting markdown sources with namespace, title, type, and tag derivers
 - `[[wikilink]]` extraction with auto ALIAS record creation on ingest
-- `blink_ingest` MCP tool (10th tool) for bulk ingest from agent sessions
+- `blink_ingest` MCP tool for bulk ingest from agent sessions
 - Fix: `content` field now passes through for all record types (was gated to SOURCE only)
+
+### Zones and Namespace Extension
+- `Blink.createZone({ namespace, description, defaultTtl, requiredTags })` — register a zone with metadata. Records saved into the zone inherit the default TTL and must carry the required tags.
+- `Blink.getZone(namespace)` — fetch a zone by namespace
+- `blink_create_zone` MCP tool — lets agents carve out new namespaces for their workflows with enforced policies
+- Migration: adds `required_tags` column to the `zones` table (idempotent, safe for existing databases)
+- `createWikiNamespace(patterns)` factory — extend `WIKI_DERIVERS` with custom top-level directories (e.g. `decisions/`, `adr/`, `people/`) using a simple template syntax (`{dir}`, `{slug(dir)}`). Paths that don't match fall back to the default wiki routing.
 
 ### CLI Install UX
 - `blink init` — auto-detects agent environment (Claude Desktop, Claude Code, Cursor, Codex) and writes MCP config
@@ -24,8 +31,8 @@ All notable changes to this project will be documented in this file.
 - `BLINK_WIKI.md` — schema document for LLM agents: namespace conventions, 5 record types, ingest/query/log/lint workflows, 4 worked example sessions
 
 ### Testing
-- 486 tests across 21 suites (up from 388 across 17 in v1.1.0)
-- New suites: wiki-derivers, wikilink-extraction, install, cli-wiki
+- 514 tests across 23 suites (up from 388 across 17 in v1.1.0)
+- New suites: wiki-derivers, wikilink-extraction, install, cli-wiki, zones, create-wiki-namespace
 - Extended: mcp.test.ts with blink_ingest coverage
 
 ## [1.1.0] - 2026-04-07

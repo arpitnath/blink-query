@@ -495,7 +495,7 @@ wiki
   .option('--ttl <seconds>', 'TTL for ingested records', parseInt)
   .option('--tags <tags>', 'Comma-separated tags')
   .action(async (directory: string, opts) => {
-    const { loadDirectory, extractiveSummarize } = await import('./ingest.js');
+    const { loadDirectory, extractiveSummarize, WIKI_DERIVERS } = await import('./ingest.js');
     const { resolve: resolvePath } = await import('path');
 
     const isJson = program.opts().json;
@@ -515,10 +515,12 @@ wiki
     }
 
     const result = await getBlink().ingest(docs, {
+      ...WIKI_DERIVERS,
       summarize: extractiveSummarize(opts.summaryLength),
       namespace: opts.ns,
       ttl: opts.ttl,
       tags: opts.tags ? opts.tags.split(',').map((t: string) => t.trim()) : undefined,
+      extractLinks: true,
     });
 
     if (isJson) {

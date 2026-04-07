@@ -24,8 +24,9 @@ All notable changes to this project will be documented in this file.
 - `BLINK_WIKI.md` — schema document for LLM agents: namespace conventions, 5 record types, ingest/query/log/lint workflows, 4 worked example sessions
 
 ### Testing
-- [N] tests across [M] suites (up from 388 in v1.1.0)
-- New suites: wiki-derivers, wikilink-extraction, mcp-ingest, install, cli-wiki
+- 486 tests across 21 suites (up from 388 across 17 in v1.1.0)
+- New suites: wiki-derivers, wikilink-extraction, install, cli-wiki
+- Extended: mcp.test.ts with blink_ingest coverage
 
 ## [1.1.0] - 2026-04-07
 

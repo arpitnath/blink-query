@@ -22,9 +22,18 @@ blink wiki init my-wiki
 
 ## Benchmark
 
-> 4-way comparison on a 30–50 file MCP ecosystem corpus. Full numbers in [`examples/llm-wiki/benchmark/RESULTS.md`](examples/llm-wiki/benchmark/RESULTS.md).
+The production-scale numbers cited below come from the v1.1.0 pathfinder benchmark: 3,890 real GitHub issues from Next.js, React, Vite, and Svelte, evaluated head-to-head against a vectra-based RAG pipeline over the same corpus, on a local Ollama setup. Reproducible with `cd examples/pathfinder && npm run ingest && npm run benchmark`.
 
-<BENCHMARK_NUMBERS>
+| | blink-query (BM25) | RAG (vectra) |
+|---|---|---|
+| Retrieval latency (avg) | **~4 ms** | ~59 ms |
+| Repeat-query cache hit | **100%** (learned) | 0% (stateless) |
+| Records indexed | 3,890 typed | 3,890 chunked |
+| External dependencies | none (SQLite + FTS5) | Ollama + `nomic-embed-text` |
+
+**~15× faster retrieval, and the blink side *learns* across queries** — records re-resolve in O(1) after the first hit. Full tables, per-question breakdown, and the learning-cache pass are in [`examples/pathfinder/src/benchmark.ts`](examples/pathfinder/src/benchmark.ts).
+
+The new v2.0.0 wiki-specific benchmark (Karpathy grep vs blink BM25 vs RAG vs qmd, 15 questions on the MCP ecosystem corpus) is in [`examples/llm-wiki/benchmark/`](examples/llm-wiki/benchmark/). The Karpathy and blink baselines have zero external dependencies and should always work — RAG and qmd are best-effort. See [`examples/llm-wiki/benchmark/RESULTS.md`](examples/llm-wiki/benchmark/RESULTS.md) for the template and how to run it locally.
 
 ---
 
@@ -46,20 +55,54 @@ blink wiki init my-wiki
 
 ## Install in your agent
 
-<INSTALL_SNIPPETS>
+The easy path — let blink detect your agent environment and write the config:
 
-For manual setup, add the MCP server to your agent config:
+```bash
+npx blink-query init
+```
+
+This auto-detects Claude Desktop, Claude Code, Cursor, and Codex, handles the nvm + absolute-node-path gotcha on macOS/Linux, wraps `npx` in `cmd /c` on Windows, and merges into your existing MCP config (it never overwrites other servers — if the JSON fails to parse, it backs up to `.bak` and warns).
+
+Run `blink doctor` afterwards to verify each installation and MCP server connectivity.
+
+### Manual config snippets
+
+If you'd rather paste the config yourself:
+
+**Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
   "mcpServers": {
-    "blink-query": {
-      "command": "blink",
-      "args": ["serve", "--db", "./wiki.db"]
+    "blink": {
+      "command": "npx",
+      "args": ["-y", "blink-query", "mcp"],
+      "env": { "BLINK_DB_PATH": "~/.blink/blink.db" }
     }
   }
 }
 ```
+
+**Claude Code** — run once:
+
+```bash
+claude mcp add-json blink --scope user '{"type":"stdio","command":"npx","args":["-y","blink-query","mcp"]}'
+```
+
+**Cursor** — `~/.cursor/mcp.json` (same shape as Claude Desktop, key `mcpServers`).
+
+**Codex** — `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.blink]
+command = "npx"
+args = ["-y", "blink-query", "mcp"]
+
+[mcp_servers.blink.env]
+BLINK_DB_PATH = "~/.blink/blink.db"
+```
+
+**nvm users:** if Claude Desktop can't find `npx`, use `blink init --absolute-node` which writes the absolute path to your node binary instead of `npx`. This avoids the "doesn't source shell rc" issue.
 
 The MCP server exposes 10 tools: `blink_resolve`, `blink_save`, `blink_search`, `blink_list`, `blink_query`, `blink_get`, `blink_delete`, `blink_move`, `blink_zones`, `blink_ingest`.
 

@@ -215,4 +215,90 @@ describe('MCP tool backing methods', () => {
       expect(results.length).toBeGreaterThan(0);
     });
   });
+
+  describe('blink.ingest() — backing for blink_ingest MCP tool', () => {
+    it('ingests a batch of wiki documents and returns records', async () => {
+      const { WIKI_DERIVERS, extractiveSummarize } = await import('../src/ingest.js');
+      const result = await blink.ingest(
+        [
+          {
+            id: 'doc-1',
+            text: '# MCP Overview\n\nThe Model Context Protocol defines tool access for LLMs.',
+            metadata: { file_name: 'mcp.md', file_path: 'sources/mcp.md' },
+          },
+          {
+            id: 'doc-2',
+            text: '# Discovery\n\nDiscovery is how clients find tools.',
+            metadata: { file_name: 'discovery.md', file_path: 'sources/discovery.md' },
+          },
+        ],
+        { ...WIKI_DERIVERS, summarize: extractiveSummarize(2000) },
+      );
+
+      expect(result.records).toHaveLength(2);
+      expect(result.total).toBe(2);
+      expect(result.errors).toEqual([]);
+      expect(result.records[0].type).toBe('SUMMARY');
+    });
+
+    it('extractLinks: true creates ALIAS records for resolved targets', async () => {
+      const { WIKI_DERIVERS, extractiveSummarize } = await import('../src/ingest.js');
+      blink.save({ namespace: 'topics', title: 'transport', type: 'SUMMARY', summary: 't' });
+
+      const result = await blink.ingest(
+        [
+          {
+            id: 'doc-1',
+            text: '# Note\n\nSee [[transport]] for details.',
+            metadata: { file_name: 'note.md', file_path: 'sources/note.md' },
+          },
+        ],
+        { ...WIKI_DERIVERS, summarize: extractiveSummarize(2000), extractLinks: true },
+      );
+
+      expect(result.aliasesCreated).toBe(1);
+      expect(result.unresolvedLinks).toEqual([]);
+    });
+
+    it('handles a SOURCE-classified document via frontmatter source_url', async () => {
+      const { WIKI_DERIVERS, extractiveSummarize } = await import('../src/ingest.js');
+      const result = await blink.ingest(
+        [
+          {
+            id: 'doc-1',
+            text: '# Article\n\nfull text here',
+            metadata: {
+              file_name: 'article.md',
+              file_path: 'sources/article.md',
+              frontmatter: { source_url: 'https://example.com/article' },
+            },
+          },
+        ],
+        { ...WIKI_DERIVERS, summarize: extractiveSummarize(2000) },
+      );
+
+      expect(result.records[0].type).toBe('SOURCE');
+    });
+
+    it('handles a META document with structured frontmatter content', async () => {
+      const { WIKI_DERIVERS, extractiveSummarize } = await import('../src/ingest.js');
+      const result = await blink.ingest(
+        [
+          {
+            id: 'doc-1',
+            text: '{}',
+            metadata: {
+              file_name: 'config.json',
+              file_path: 'sources/config.json',
+              frontmatter: { content: { max: 100, enabled: true } },
+            },
+          },
+        ],
+        { ...WIKI_DERIVERS, summarize: extractiveSummarize(2000) },
+      );
+
+      expect(result.records[0].type).toBe('META');
+      expect(result.records[0].content).toEqual({ max: 100, enabled: true });
+    });
+  });
 });

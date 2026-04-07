@@ -1,0 +1,80 @@
+{
+  "description": "Evaluation questions for the llm-wiki example benchmark. Tests direct lookup, cross-source synthesis, entity questions, and namespace browsing.",
+  "questions": [
+    {
+      "id": "q1",
+      "category": "direct-lookup",
+      "q": "What is the MCP stdio transport?"
+    },
+    {
+      "id": "q2",
+      "category": "direct-lookup",
+      "q": "How does the MCP lifecycle work?"
+    },
+    {
+      "id": "q3",
+      "category": "direct-lookup",
+      "q": "What is the purpose of MCP roots protocol?"
+    },
+    {
+      "id": "q4",
+      "category": "direct-lookup",
+      "q": "How does MCP authentication with OAuth work?"
+    },
+    {
+      "id": "q5",
+      "category": "entity",
+      "q": "Who is Tobi Lütke and what did he build?"
+    },
+    {
+      "id": "q6",
+      "category": "entity",
+      "q": "What is Anthropic's role in MCP?"
+    },
+    {
+      "id": "q7",
+      "category": "synthesis",
+      "q": "How do qmd and blink-query differ in their approach to knowledge retrieval?"
+    },
+    {
+      "id": "q8",
+      "category": "synthesis",
+      "q": "Compare MCP function calling and tool integration."
+    },
+    {
+      "id": "q9",
+      "category": "browse",
+      "q": "What MCP servers exist for knowledge base integration?"
+    },
+    {
+      "id": "q10",
+      "category": "browse",
+      "q": "What MCP SDKs are available?"
+    },
+    {
+      "id": "q11",
+      "category": "browse",
+      "q": "Which MCP capabilities can a server expose?"
+    },
+    {
+      "id": "q12",
+      "category": "direct-lookup",
+      "q": "What did Karpathy propose in the LLM wiki concept?"
+    },
+    {
+      "id": "q13",
+      "category": "direct-lookup",
+      "q": "What is Rohit G's LLM wiki v2 spec?"
+    },
+    {
+      "id": "q14",
+      "category": "synthesis",
+      "q": "Summarize the MCP tools, resources, and prompts capability model."
+    },
+    {
+      "id": "q15",
+      "category": "synthesis",
+      "q": "Why was MCP created and what problem does it solve?"
+    }
+  ]
+}

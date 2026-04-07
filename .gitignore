@@ -19,6 +19,7 @@ src/grammar/query-parser.d.ts
 # Local docs (not for publishing)
 ARCHITECTURE.md
 docs/exploration/
+.local/
 
 # OS
 .DS_Store

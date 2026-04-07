@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-04-07
+
+### Performance
+- SQLite WAL mode and mmap pragmas for faster reads
+- `skipIfUnchanged` deduplication on save (content-hash based)
+- TTL-based eviction sweep for stale records
+- Per-batch transaction flush in `saveMany()` (was single end-of-run transaction)
+
+### Resolver
+- `resolveCollection()` capped at 20 records per response (was unbounded)
+- NXDOMAIN responses now include nearby-path suggestions for fuzzy navigation
+
+### Adapters
+- New GitHub Issues adapter (`loadFromGitHubIssues`, `ingestFromGitHub`)
+- `GITHUB_DERIVERS` preset with namespace, title, tags, and source derivers
+
+### MCP Server
+- `limit` and `offset` pagination on `blink_list` and `blink_search`
+
+### Examples
+- New `examples/pathfinder/` — knowledge resolution agent powered by blink-query and pi-ai
+- Multi-repo GitHub issues ingestion (Next.js, React, Vite, Svelte) with rule-based classifier
+- Benchmark harness comparing blink BM25 vs RAG (vectra) — retrieval, full pipeline, and learning cache passes
+- `agent-blink.ts` and `agent-rag.ts` demonstrating both approaches
+- 17 evaluation questions covering direct lookup, namespace browse, keyword search, cross-repo
+
+### Testing
+- 388 tests across 17 suites (was 320 across 12)
+- New: github-adapter, ingest-batch, mcp-pagination, resolver-scale, store-perf
+
 ## [1.0.0] - 2026-02-14
 
 ### Core

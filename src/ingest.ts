@@ -814,6 +814,93 @@ const DEFAULT_TEXT_EXTENSIONS = new Set([
   '.fs',                                 // F#
 ]);
 
+/** Directories always excluded from recursive walks regardless of options. */
+const DEFAULT_IGNORE_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  '.git',
+  '.next',
+  '.turbo',
+  'coverage',
+  '.cache',
+]);
+
+/**
+ * Parse a minimal subset of YAML frontmatter from a markdown file. Handles
+ * `key: value`, `key: "quoted value"`, and flat-list values. Nested objects
+ * are not supported — consumers that need full YAML should parse the raw
+ * text themselves. Returns null if the file has no frontmatter block.
+ */
+export function parseFrontmatter(text: string): { frontmatter: Record<string, unknown>; body: string } | null {
+  // Normalize line endings so CRLF / LF / CR inputs all parse identically.
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!normalized.startsWith('---\n')) return null;
+
+  const endIdx = normalized.indexOf('\n---', 4);
+  if (endIdx < 0) return null;
+
+  const block = normalized.slice(4, endIdx);
+  const body = normalized.slice(endIdx + 4).replace(/^\n/, '');
+  const fm: Record<string, unknown> = {};
+
+  const lines = block.split('\n');
+  let currentListKey: string | null = null;
+  let currentList: string[] = [];
+
+  const flushList = () => {
+    if (currentListKey !== null) {
+      fm[currentListKey] = currentList;
+      currentListKey = null;
+      currentList = [];
+    }
+  };
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    // List item under a pending key
+    const listMatch = line.match(/^\s*-\s+(.*)$/);
+    if (listMatch && currentListKey !== null) {
+      currentList.push(stripQuotes(listMatch[1].trim()));
+      continue;
+    }
+
+    // key: value
+    const kv = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
+    if (!kv) continue;
+    flushList();
+    const key = kv[1];
+    const value = kv[2].trim();
+
+    if (value === '') {
+      // Next lines might be a list
+      currentListKey = key;
+    } else {
+      fm[key] = coerceValue(stripQuotes(value));
+    }
+  }
+  flushList();
+
+  return { frontmatter: fm, body };
+}
+
+function stripQuotes(s: string): string {
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+function coerceValue(s: string): unknown {
+  if (s === 'true') return true;
+  if (s === 'false') return false;
+  if (s === 'null' || s === '~') return null;
+  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+  if (/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
+  return s;
+}
+
 async function loadDirectoryBasic(
   dirPath: string,
   options?: LoadDirectoryOptions,
@@ -835,6 +922,9 @@ async function loadDirectoryBasic(
       // E2: Skip hidden files/directories unless includeHidden is true
       if (entry.name.startsWith('.') && !options?.includeHidden) continue;
 
+      // Skip well-known noise directories unconditionally
+      if (entry.isDirectory() && DEFAULT_IGNORE_DIRS.has(entry.name)) continue;
+
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory() && options?.recursive !== false) {
         await walk(fullPath);
@@ -850,16 +940,30 @@ async function loadDirectoryBasic(
           if (content.trim().length === 0) continue;
 
           const relPath = relative(basePath, fullPath);
+
+          // Parse YAML frontmatter for markdown files so wiki derivers can
+          // see title/source_url/type/tags without each caller re-parsing.
+          const isMarkdown = ext(entry.name).toLowerCase() === '.md' || ext(entry.name).toLowerCase() === '.markdown';
+          const metadata: Record<string, unknown> = {
+            file_path: relPath,
+            file_name: entry.name,
+            file_type: ext(entry.name),
+            file_size: stats.size,
+            loader: 'basic',
+          };
+          let text = content;
+          if (isMarkdown) {
+            const parsed = parseFrontmatter(content);
+            if (parsed) {
+              metadata.frontmatter = parsed.frontmatter;
+              text = parsed.body;
+            }
+          }
+
           docs.push({
             id: randomUUID(),
-            text: content,
-            metadata: {
-              file_path: relPath,
-              file_name: entry.name,
-              file_type: ext(entry.name),
-              file_size: stats.size,
-              loader: 'basic',  // E6: Loader metadata
-            },
+            text,
+            metadata,
           });
 
           // E5: Progress callback

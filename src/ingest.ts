@@ -517,11 +517,34 @@ export async function documentToSaveInput(
     title,
     type,
     summary,
-    content: type === 'SOURCE' ? { original_id: doc.id, source_metadata: doc.metadata } : undefined,
+    content: deriveContent(type, doc),
     tags,
     ttl: options.ttl,
     sources,
   };
+}
+
+/**
+ * Derive the structured content field for an ingested record.
+ *
+ * SOURCE — track original_id and source_metadata so consumers can refetch.
+ * META   — pass through frontmatter.content if present, else the full
+ *          frontmatter object, so structured wiki entity pages survive
+ *          ingestion (the previous behaviour silently dropped this).
+ * Other  — no structured content; the summary text carries the value.
+ */
+function deriveContent(type: RecordType, doc: IngestDocument): unknown | undefined {
+  if (type === 'SOURCE') {
+    return { original_id: doc.id, source_metadata: doc.metadata };
+  }
+  if (type === 'META') {
+    const fm = doc.metadata?.frontmatter as Record<string, unknown> | undefined;
+    if (fm && 'content' in fm && fm.content !== undefined) return fm.content;
+    if (fm && Object.keys(fm).length > 0) return fm;
+    if (doc.metadata && Object.keys(doc.metadata).length > 0) return doc.metadata;
+    return undefined;
+  }
+  return undefined;
 }
 
 // ─── Batch processing ───────────────────────────────────────

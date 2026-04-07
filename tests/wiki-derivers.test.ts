@@ -6,6 +6,7 @@ import {
   wikiTitle,
   wikiTags,
   wikiSources,
+  documentToSaveInput,
 } from '../src/ingest.js';
 
 // ─── WIKI_DERIVERS shape ────────────────────────────────────
@@ -330,5 +331,91 @@ describe('wikiSources', () => {
 
   it('returns empty array when file_path is missing', () => {
     expect(wikiSources({})).toEqual([]);
+  });
+});
+
+// ─── content field survives ingest for all record types ────
+
+describe('documentToSaveInput content field', () => {
+  it('SOURCE: tracks original_id and source_metadata (existing behavior)', async () => {
+    const result = await documentToSaveInput(
+      { id: 'src-1', text: 'content', metadata: { file_name: 'foo.md', frontmatter: { source_url: 'https://example.com' } } },
+      { ...WIKI_DERIVERS },
+    );
+    expect(result.type).toBe('SOURCE');
+    expect(result.content).toEqual({
+      original_id: 'src-1',
+      source_metadata: { file_name: 'foo.md', frontmatter: { source_url: 'https://example.com' } },
+    });
+  });
+
+  it('META: passes through frontmatter.content when present', async () => {
+    const result = await documentToSaveInput(
+      {
+        id: 'meta-1',
+        text: '{}',
+        metadata: {
+          file_name: 'config.json',
+          frontmatter: { content: { max_users: 100, enabled: true } },
+        },
+      },
+      { ...WIKI_DERIVERS },
+    );
+    expect(result.type).toBe('META');
+    expect(result.content).toEqual({ max_users: 100, enabled: true });
+  });
+
+  it('META: passes through full frontmatter when no content field', async () => {
+    const result = await documentToSaveInput(
+      {
+        id: 'meta-2',
+        text: '{}',
+        metadata: {
+          file_name: 'config.json',
+          frontmatter: { name: 'alice', role: 'admin' },
+        },
+      },
+      { ...WIKI_DERIVERS },
+    );
+    expect(result.type).toBe('META');
+    expect(result.content).toEqual({ name: 'alice', role: 'admin' });
+  });
+
+  it('META: falls back to metadata when no frontmatter at all', async () => {
+    const result = await documentToSaveInput(
+      { id: 'meta-3', text: '{}', metadata: { file_name: 'config.yaml', schema: 'v1' } },
+      { ...WIKI_DERIVERS },
+    );
+    expect(result.type).toBe('META');
+    expect(result.content).toMatchObject({ schema: 'v1' });
+  });
+
+  it('SUMMARY: leaves content undefined (text is in summary)', async () => {
+    const result = await documentToSaveInput(
+      {
+        id: 'sum-1',
+        text: '# Heading\n\nbody',
+        metadata: { file_name: 'note.md' },
+      },
+      { ...WIKI_DERIVERS },
+    );
+    expect(result.type).toBe('SUMMARY');
+    expect(result.content).toBeUndefined();
+  });
+
+  it('META content survives even when frontmatter.content is an array', async () => {
+    const result = await documentToSaveInput(
+      {
+        id: 'meta-4',
+        text: 'data',
+        metadata: {
+          file_name: 'list.json',
+          frontmatter: { content: [1, 2, 3] },
+        },
+      },
+      { ...WIKI_DERIVERS },
+    );
+    expect(result.type).toBe('META');
+    expect(result.content).toEqual([1, 2, 3]);
   });
 });

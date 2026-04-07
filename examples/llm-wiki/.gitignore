@@ -1,0 +1,6 @@
+data/
+node_modules/
+*.db
+*.db-journal
+vectra-index/
+benchmark-results.json

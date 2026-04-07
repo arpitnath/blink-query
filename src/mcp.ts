@@ -145,6 +145,34 @@ const TOOLS = [
     },
   },
   {
+    name: 'blink_create_zone',
+    description:
+      'Register a zone (top-level namespace) with metadata. Declare a description, a default TTL applied to records saved without an explicit TTL, and required tags that every record in the zone must include. Agents can call this to carve out new namespaces for their workflows (e.g. "decisions", "adr", "people") with enforced policies.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        namespace: {
+          type: 'string',
+          description: 'Top-level namespace to register, e.g. "adr", "decisions", "people"',
+        },
+        description: {
+          type: 'string',
+          description: 'Human-readable description of what lives in this zone',
+        },
+        defaultTtl: {
+          type: 'integer',
+          description: 'Default TTL (seconds) applied to records saved into this zone when no TTL is provided',
+        },
+        requiredTags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tags every record in this zone must include — save throws if missing',
+        },
+      },
+      required: ['namespace'],
+    },
+  },
+  {
     name: 'blink_ingest',
     description:
       'Ingest a batch of documents using a deriver preset. Each document is classified, summarized, and saved as a typed record. Supports the LLM wiki pattern via the "wiki" preset (default), which auto-extracts [[wikilinks]] as ALIAS records.',
@@ -336,6 +364,30 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
       case 'blink_zones': {
         const zones = blink.zones();
         return jsonResponse({ count: zones.length, zones });
+      }
+
+      case 'blink_create_zone': {
+        const namespace = args?.namespace as string;
+        if (!namespace) throw new McpError(ErrorCode.InvalidParams, 'namespace is required');
+        if (namespace.length > MAX_PATH_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, `namespace exceeds maximum length of ${MAX_PATH_LENGTH}`);
+        }
+        const description = args?.description as string | undefined;
+        if (description && description.length > MAX_SUMMARY_LENGTH) {
+          throw new McpError(ErrorCode.InvalidParams, 'description exceeds maximum length');
+        }
+        const defaultTtl = args?.defaultTtl as number | undefined;
+        if (defaultTtl !== undefined && (!Number.isInteger(defaultTtl) || defaultTtl < 0)) {
+          throw new McpError(ErrorCode.InvalidParams, 'defaultTtl must be a non-negative integer');
+        }
+        const requiredTags = args?.requiredTags as string[] | undefined;
+        if (requiredTags !== undefined) {
+          if (!Array.isArray(requiredTags) || !requiredTags.every(t => typeof t === 'string')) {
+            throw new McpError(ErrorCode.InvalidParams, 'requiredTags must be an array of strings');
+          }
+        }
+        const zone = blink.createZone({ namespace, description, defaultTtl, requiredTags });
+        return jsonResponse({ status: 'registered', zone });
       }
 
       case 'blink_ingest': {

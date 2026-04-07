@@ -45,9 +45,22 @@ export interface Zone {
   path: string;
   description: string | null;
   default_ttl: number;
+  required_tags: string[] | null;
   record_count: number;
   created_at: string;
   last_modified: string;
+}
+
+/** Config accepted by Blink.createZone() — everything except path is optional. */
+export interface ZoneConfig {
+  /** Top-level namespace path, e.g. "adr", "decisions", "people". */
+  namespace: string;
+  /** Human-readable description of what lives in this zone. */
+  description?: string;
+  /** Default TTL (seconds) applied to records saved into this zone when no TTL is specified. */
+  defaultTtl?: number;
+  /** Tag names that every record in this zone must include. Save throws if missing. */
+  requiredTags?: string[];
 }
 
 // Query AST (output of Peggy parser)

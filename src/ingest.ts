@@ -474,6 +474,56 @@ export const WIKI_DERIVERS = {
   buildSources: wikiSources,
 } as const;
 
+/**
+ * Factory for a custom wiki namespace function that understands extra
+ * top-level directories beyond the built-ins (entity/, topics/, log/).
+ *
+ * Each pattern maps a top-level directory name to a namespace template.
+ * The template may reference `{dir}` (the next path segment) or `{slug(dir)}`
+ * (slugified). Paths that don't match any custom pattern fall through to
+ * the default `wikiNamespace` logic.
+ *
+ * @example
+ *   const DERIVERS = {
+ *     ...WIKI_DERIVERS,
+ *     deriveNamespace: createWikiNamespace({
+ *       decisions: 'decisions/{dir}',
+ *       adr:       'adr',
+ *       people:    'people/{slug(dir)}',
+ *     }),
+ *   };
+ *   await blink.ingestDirectory('./wiki', DERIVERS);
+ */
+export function createWikiNamespace(
+  patterns: Record<string, string>,
+): (metadata: Record<string, unknown>) => string {
+  return (metadata: Record<string, unknown>): string => {
+    // Frontmatter namespace override still wins
+    const fm = metadata.frontmatter as Record<string, unknown> | undefined;
+    if (fm && typeof fm.namespace === 'string' && fm.namespace.length > 0) {
+      return fm.namespace;
+    }
+
+    const filePath = metadata.file_path as string | undefined;
+    if (!filePath) return wikiNamespace(metadata);
+
+    const normalized = filePath.replace(/\\/g, '/').replace(/^\.?\/?/, '');
+    const parts = normalized.split('/').filter(Boolean);
+    if (parts.length === 0) return wikiNamespace(metadata);
+
+    const topDir = parts[0];
+    const template = patterns[topDir];
+    if (!template) return wikiNamespace(metadata);
+
+    // Template resolution: replace {dir} and {slug(dir)} with the next segment
+    const nextDir = parts.length >= 3 ? parts[1] : undefined;
+    return template.replace(/\{(slug\()?dir\)?\}/g, (_match, isSlug) => {
+      if (!nextDir) return topDir;
+      return isSlug ? slug(nextDir) : nextDir;
+    });
+  };
+}
+
 // ─── Resolve namespace with prefix/override ─────────────────
 
 function resolveNamespace(

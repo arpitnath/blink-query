@@ -3,8 +3,19 @@ import { createHash, randomUUID } from 'crypto';
 import { mkdirSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
-import type { BlinkRecord, SaveInput, Zone } from './types.js';
+import type { BlinkRecord, SaveInput, Zone, ZoneConfig } from './types.js';
 import { validateSaveInput } from './validation.js';
+
+/** Raw row shape of a zones table entry as returned by SQLite. */
+interface RawZone {
+  path: string;
+  description: string | null;
+  default_ttl: number;
+  required_tags: string | null;
+  record_count: number;
+  created_at: string;
+  last_modified: string;
+}
 
 const DEFAULT_TTL = 2592000; // 30 days
 
@@ -40,6 +51,7 @@ CREATE TABLE IF NOT EXISTS zones (
     path          TEXT PRIMARY KEY,
     description   TEXT,
     default_ttl   INTEGER DEFAULT ${DEFAULT_TTL},
+    required_tags TEXT,
     record_count  INTEGER DEFAULT 0,
     created_at    TEXT NOT NULL,
     last_modified TEXT NOT NULL
@@ -119,7 +131,18 @@ export function initDB(dbPath?: string): Database {
   db.pragma('mmap_size = 268435456');
   db.pragma('temp_store = MEMORY');
   migrateFTS(db);
+  migrateZonesRequiredTags(db);
   return db;
+}
+
+/**
+ * Migration: add `required_tags` column to zones table for databases
+ * created before v2.0.0. Idempotent — no-op if the column already exists.
+ */
+export function migrateZonesRequiredTags(db: Database): void {
+  const cols = db.prepare(`PRAGMA table_info(zones)`).all() as Array<{ name: string }>;
+  if (cols.some(c => c.name === 'required_tags')) return;
+  db.exec(`ALTER TABLE zones ADD COLUMN required_tags TEXT`);
 }
 
 export function migrateFTS(db: Database): void {
@@ -168,9 +191,57 @@ function incrementZoneCount(db: Database, namespace: string, delta: number): voi
   ).run(delta, now(), zonePath);
 }
 
+function deserializeZone(row: RawZone): Zone {
+  return {
+    path: row.path,
+    description: row.description,
+    default_ttl: row.default_ttl,
+    required_tags: row.required_tags ? JSON.parse(row.required_tags) as string[] : null,
+    record_count: row.record_count,
+    created_at: row.created_at,
+    last_modified: row.last_modified,
+  };
+}
+
 export function listZones(db: Database): Zone[] {
-  const rows = db.prepare('SELECT * FROM zones ORDER BY path').all() as Zone[];
-  return rows;
+  const rows = db.prepare('SELECT * FROM zones ORDER BY path').all() as RawZone[];
+  return rows.map(deserializeZone);
+}
+
+export function getZone(db: Database, namespace: string): Zone | null {
+  const zonePath = getZonePath(namespace);
+  const row = db.prepare('SELECT * FROM zones WHERE path = ?').get(zonePath) as RawZone | null;
+  return row ? deserializeZone(row) : null;
+}
+
+/**
+ * Create or update a zone's metadata. Unlike ensureZone (which is called
+ * implicitly on save), this lets devs and agents declare zones up-front with
+ * a description, default TTL, and required tags that every record in the
+ * zone must carry.
+ */
+export function createZone(db: Database, config: ZoneConfig): Zone {
+  const zonePath = getZonePath(config.namespace);
+  const timestamp = now();
+  const existing = db.prepare('SELECT * FROM zones WHERE path = ?').get(zonePath) as RawZone | null;
+
+  const description = config.description ?? existing?.description ?? null;
+  const defaultTtl = config.defaultTtl ?? existing?.default_ttl ?? DEFAULT_TTL;
+  const requiredTags = config.requiredTags !== undefined
+    ? JSON.stringify(config.requiredTags)
+    : existing?.required_tags ?? null;
+
+  if (existing) {
+    db.prepare(
+      'UPDATE zones SET description = ?, default_ttl = ?, required_tags = ?, last_modified = ? WHERE path = ?'
+    ).run(description, defaultTtl, requiredTags, timestamp, zonePath);
+  } else {
+    db.prepare(
+      'INSERT INTO zones (path, description, default_ttl, required_tags, record_count, created_at, last_modified) VALUES (?, ?, ?, ?, 0, ?, ?)'
+    ).run(zonePath, description, defaultTtl, requiredTags, timestamp, timestamp);
+  }
+
+  return getZone(db, config.namespace)!;
 }
 
 // --- FTS5 operations ---
@@ -279,8 +350,21 @@ function saveInner(db: Database, input: SaveInput): string {
   const hash = contentHash(summary || content || '');
   const tokens = summary ? tokenCount(summary) : 0;
   const timestamp = now();
-  const ttl = cleanedInput.ttl || DEFAULT_TTL;
   const sources = cleanedInput.sources ? JSON.stringify(cleanedInput.sources) : '[]';
+
+  // Zone metadata: apply defaultTtl and validate requiredTags.
+  // Registered zones (via createZone) get first dibs on policy.
+  const zone = getZone(db, cleanedInput.namespace);
+  if (zone?.required_tags && zone.required_tags.length > 0) {
+    const missing = zone.required_tags.filter(t => !tags.includes(t));
+    if (missing.length > 0) {
+      throw new Error(
+        `Zone "${getZonePath(cleanedInput.namespace)}" requires tags [${zone.required_tags.join(', ')}], ` +
+        `missing: [${missing.join(', ')}]`,
+      );
+    }
+  }
+  const ttl = cleanedInput.ttl || zone?.default_ttl || DEFAULT_TTL;
 
   // A2: Handle slug collisions — different titles producing the same slug
   let counter = 2;

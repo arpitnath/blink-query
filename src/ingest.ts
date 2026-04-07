@@ -1,4 +1,5 @@
 import { extname, basename, dirname } from 'path';
+import { slug } from './store.js';
 import type {
   IngestDocument,
   IngestOptions,
@@ -307,6 +308,172 @@ export const GITHUB_DERIVERS = {
   buildSources: githubSources,
 } as const;
 
+// ─── Wiki derivers (for LLM wiki pattern — markdown + wikilinks) ─
+
+/**
+ * Rule-based classifier for LLM wiki content.
+ *
+ * Order of precedence:
+ *   1. Frontmatter `type:` field (explicit override)
+ *   2. File extension: .json/.yaml/.yml → META
+ *   3. Frontmatter `source_url:` (or `url:`) field → SOURCE
+ *   4. Markdown file with heading (# ...) → SUMMARY
+ *   5. Default fallback → SOURCE
+ */
+export function wikiClassify(
+  text: string,
+  metadata: Record<string, unknown>,
+): RecordType {
+  // 1. Frontmatter explicit type wins
+  const fm = metadata.frontmatter as Record<string, unknown> | undefined;
+  if (fm && typeof fm.type === 'string') {
+    const t = fm.type.toLowerCase();
+    if (t === 'source') return 'SOURCE';
+    if (t === 'summary') return 'SUMMARY';
+    if (t === 'meta') return 'META';
+    if (t === 'collection') return 'COLLECTION';
+    if (t === 'alias') return 'ALIAS';
+  }
+
+  // 2. Structured-data file extensions → META
+  const fileName = metadata.file_name as string | undefined;
+  const ext = fileName ? extname(fileName).toLowerCase() : '';
+  if (ext === '.json' || ext === '.yaml' || ext === '.yml') return 'META';
+
+  // 3. Frontmatter source_url (or url) → external SOURCE
+  // Accept both field names — source_url is the wiki convention, url is shorthand.
+  const sourceUrl =
+    (fm && typeof fm.source_url === 'string' && fm.source_url) ||
+    (fm && typeof fm.url === 'string' && fm.url);
+  if (sourceUrl) return 'SOURCE';
+
+  // 4. Markdown with at least one heading → SUMMARY
+  if (ext === '.md' || ext === '.markdown') {
+    if (/^#{1,6}[ \t]+\S/m.test(text)) return 'SUMMARY';
+  }
+
+  // 5. Default
+  return 'SOURCE';
+}
+
+/**
+ * Derive a namespace by wiki content shape. Inspects `file_path` subdirectories
+ * to route content into stable namespaces:
+ *   - entity/<name>/...    → entity/<slug(name)>
+ *   - topics/<name>/...    → topics/<slug(name)>
+ *   - log/<YYYY-MM-DD>/... → log/<YYYY-MM-DD>
+ *   - root-level files     → sources
+ *   - other directories    → dirname(file_path) (filesystem fallback)
+ *
+ * Frontmatter `namespace:` overrides everything.
+ */
+export function wikiNamespace(metadata: Record<string, unknown>): string {
+  // Frontmatter namespace override
+  const fm = metadata.frontmatter as Record<string, unknown> | undefined;
+  if (fm && typeof fm.namespace === 'string' && fm.namespace.length > 0) {
+    return fm.namespace;
+  }
+
+  const filePath = metadata.file_path as string | undefined;
+  if (!filePath) return 'sources';
+
+  const normalized = filePath.replace(/\\/g, '/').replace(/^\.?\/?/, '');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length === 0) return 'sources';
+
+  // Drop the filename (last segment)
+  const dirs = parts.slice(0, -1);
+
+  // Root-level files → sources
+  if (dirs.length === 0) return 'sources';
+
+  // Wiki-specific prefixes
+  if (dirs[0] === 'log' && dirs.length >= 2 && /^\d{4}-\d{2}-\d{2}$/.test(dirs[1])) {
+    return `log/${dirs[1]}`;
+  }
+  if (dirs[0] === 'entity' || dirs[0] === 'topics') {
+    return dirs.length >= 2 ? `${dirs[0]}/${slug(dirs[1])}` : dirs[0];
+  }
+
+  // Other directories: preserve structure
+  return dirs.join('/');
+}
+
+/**
+ * Derive a title from wiki metadata. Prefers frontmatter `title:` if present,
+ * otherwise falls back to the filename without extension.
+ */
+export function wikiTitle(metadata: Record<string, unknown>): string {
+  const fm = metadata.frontmatter as Record<string, unknown> | undefined;
+  if (fm && typeof fm.title === 'string' && fm.title.length > 0) return fm.title;
+
+  const fileName = (metadata.file_name as string) || 'untitled';
+  const ext = extname(fileName);
+  return ext ? fileName.slice(0, -ext.length) : fileName;
+}
+
+/**
+ * Derive tags from wiki metadata. Always includes 'wiki', plus frontmatter
+ * tags, file extension, and the top-level directory (entity/topics/log/etc).
+ */
+export function wikiTags(
+  metadata: Record<string, unknown>,
+  extraTags?: string[],
+): string[] {
+  const tags: string[] = ['wiki'];
+
+  // Frontmatter tags
+  const fm = metadata.frontmatter as Record<string, unknown> | undefined;
+  if (fm && Array.isArray(fm.tags)) {
+    for (const t of fm.tags) {
+      if (typeof t === 'string') tags.push(t);
+    }
+  }
+
+  // File extension
+  const fileName = metadata.file_name as string | undefined;
+  if (fileName) {
+    const ext = extname(fileName).replace(/^\./, '');
+    if (ext) tags.push(ext);
+  }
+
+  // Top-level directory as a tag
+  const filePath = metadata.file_path as string | undefined;
+  if (filePath) {
+    const parts = filePath.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (parts.length > 1) tags.push(parts[0]);
+  }
+
+  if (extraTags) tags.push(...extraTags);
+  return [...new Set(tags.map(t => t.toLowerCase()))];
+}
+
+/** Build file-based source references for wiki content. */
+export function wikiSources(metadata: Record<string, unknown>): Source[] {
+  const filePath = (metadata.file_path as string) || undefined;
+  return filePath
+    ? [{ type: 'file', file_path: filePath, last_fetched: new Date().toISOString() }]
+    : [];
+}
+
+/**
+ * Preset derivers + classifier for the LLM wiki pattern.
+ *
+ * Unlike the other *_DERIVERS presets, this bundle also includes a
+ * rule-based `classify` function, so it can be spread directly into
+ * `blink.ingest()` options without needing a separate classifier.
+ *
+ * @example
+ *   await blink.ingestDirectory('./wiki', { ...WIKI_DERIVERS, summarize });
+ */
+export const WIKI_DERIVERS = {
+  classify: wikiClassify,
+  deriveNamespace: wikiNamespace,
+  deriveTitle: wikiTitle,
+  deriveTags: wikiTags,
+  buildSources: wikiSources,
+} as const;
+
 // ─── Resolve namespace with prefix/override ─────────────────
 
 function resolveNamespace(
@@ -350,11 +517,34 @@ export async function documentToSaveInput(
     title,
     type,
     summary,
-    content: type === 'SOURCE' ? { original_id: doc.id, source_metadata: doc.metadata } : undefined,
+    content: deriveContent(type, doc),
     tags,
     ttl: options.ttl,
     sources,
   };
+}
+
+/**
+ * Derive the structured content field for an ingested record.
+ *
+ * SOURCE — track original_id and source_metadata so consumers can refetch.
+ * META   — pass through frontmatter.content if present, else the full
+ *          frontmatter object, so structured wiki entity pages survive
+ *          ingestion (the previous behaviour silently dropped this).
+ * Other  — no structured content; the summary text carries the value.
+ */
+function deriveContent(type: RecordType, doc: IngestDocument): unknown | undefined {
+  if (type === 'SOURCE') {
+    return { original_id: doc.id, source_metadata: doc.metadata };
+  }
+  if (type === 'META') {
+    const fm = doc.metadata?.frontmatter as Record<string, unknown> | undefined;
+    if (fm && 'content' in fm && fm.content !== undefined) return fm.content;
+    if (fm && Object.keys(fm).length > 0) return fm;
+    if (doc.metadata && Object.keys(doc.metadata).length > 0) return doc.metadata;
+    return undefined;
+  }
+  return undefined;
 }
 
 // ─── Batch processing ───────────────────────────────────────
@@ -405,6 +595,105 @@ export async function processDocuments(
   }
 
   return { records, errors, total: docs.length, elapsed: Date.now() - start };
+}
+
+// ─── Wikilink extraction ───────────────────────────────────
+
+/**
+ * Matches `[[target]]` and `[[target|display text]]` patterns in markdown.
+ * Captures the target text (group 1), discards the optional display alias.
+ */
+const WIKILINK_RE = /\[\[([^\]|\n]+?)(?:\|[^\]\n]*)?\]\]/g;
+
+/** Minimal blink-shaped interface for wikilink extraction. */
+export interface WikiLinkExtractorBlink {
+  search(keywords: string, options?: { limit?: number }): BlinkRecord[];
+  saveMany(inputs: SaveInput[]): BlinkRecord[];
+}
+
+export interface ExtractWikiLinksResult {
+  /** Number of ALIAS records created. */
+  aliasesCreated: number;
+  /** Target text that did not resolve to any record (skipped, no ALIAS made). */
+  unresolvedLinks: string[];
+  /** The created ALIAS records. */
+  aliases: BlinkRecord[];
+}
+
+/**
+ * Scan saved records' summaries for `[[wikilinks]]` and create ALIAS records
+ * for each resolved target.
+ *
+ * For each record with a non-empty summary, all `[[X]]` and `[[X|display]]`
+ * patterns are extracted and deduped per source record. For each unique
+ * target, a keyword search is run against the existing blink store. If a
+ * record matches, an ALIAS is created at:
+ *
+ *   `<source.namespace>/aliases/<target>` → target=`<found.path>`
+ *
+ * Targets that do not resolve are reported in `unresolvedLinks` and no ALIAS
+ * is created — wikilinks are forward references and missing targets are not
+ * an error condition.
+ */
+export function extractWikiLinks(
+  blink: WikiLinkExtractorBlink,
+  records: BlinkRecord[],
+): ExtractWikiLinksResult {
+  const aliasInputs: SaveInput[] = [];
+  const unresolvedLinks: string[] = [];
+  const seenAliases = new Set<string>(); // dedup by namespace+title
+
+  for (const record of records) {
+    if (!record.summary) continue;
+    if (record.type === 'ALIAS') continue; // never extract from an alias
+
+    const seenTargets = new Set<string>();
+    WIKILINK_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = WIKILINK_RE.exec(record.summary)) !== null) {
+      const targetText = match[1].trim();
+      if (!targetText || seenTargets.has(targetText.toLowerCase())) continue;
+      seenTargets.add(targetText.toLowerCase());
+
+      // Try to find a target by keyword search; filter out self-references.
+      let candidates: BlinkRecord[] = [];
+      try {
+        candidates = blink.search(targetText, { limit: 5 });
+      } catch {
+        // Search failure is non-fatal — treat as unresolved
+        candidates = [];
+      }
+      const targets = candidates.filter(c => c.path !== record.path);
+
+      if (targets.length === 0) {
+        unresolvedLinks.push(targetText);
+        continue;
+      }
+
+      // ALIAS lives under the source record's path, not its bare namespace.
+      // record.path = "sources/mcp-spec" → alias namespace = "sources/mcp-spec/aliases"
+      const aliasNamespace = `${record.path}/aliases`;
+      const dedupKey = `${aliasNamespace}|${targetText.toLowerCase()}`;
+      if (seenAliases.has(dedupKey)) continue;
+      seenAliases.add(dedupKey);
+
+      aliasInputs.push({
+        namespace: aliasNamespace,
+        title: targetText,
+        type: 'ALIAS',
+        content: { target: targets[0].path },
+        tags: ['wiki', 'wikilink'],
+      });
+    }
+  }
+
+  const aliases = aliasInputs.length > 0 ? blink.saveMany(aliasInputs) : [];
+
+  return {
+    aliasesCreated: aliases.length,
+    unresolvedLinks,
+    aliases,
+  };
 }
 
 // ─── Directory loading ──────────────────────────────────────

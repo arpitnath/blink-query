@@ -7,7 +7,16 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { Blink } from './blink.js';
-import type { RecordType } from './types.js';
+import {
+  WIKI_DERIVERS,
+  GITHUB_DERIVERS,
+  FILESYSTEM_DERIVERS,
+  WEB_DERIVERS,
+  GIT_DERIVERS,
+  POSTGRES_DERIVERS,
+  extractiveSummarize,
+} from './ingest.js';
+import type { RecordType, IngestDocument, IngestOptions } from './types.js';
 
 // Input validation limits
 const MAX_PATH_LENGTH = 500;
@@ -15,6 +24,8 @@ const MAX_TITLE_LENGTH = 1000;
 const MAX_SUMMARY_LENGTH = 100_000; // 100KB
 const MAX_QUERY_LENGTH = 5000;
 const MAX_KEYWORDS_LENGTH = 1000;
+const MAX_INGEST_DOCS = 1000;
+const MAX_INGEST_TEXT_LENGTH = 1_000_000; // 1MB per doc
 
 const TOOLS = [
   {
@@ -133,6 +144,43 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: 'blink_ingest',
+    description:
+      'Ingest a batch of documents using a deriver preset. Each document is classified, summarized, and saved as a typed record. Supports the LLM wiki pattern via the "wiki" preset (default), which auto-extracts [[wikilinks]] as ALIAS records.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        documents: {
+          type: 'array',
+          description: 'Documents to ingest (max 1000 per call)',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Optional stable identifier' },
+              text: { type: 'string', description: 'Document text content' },
+              metadata: { type: 'object', description: 'Optional metadata (file_name, file_path, frontmatter, etc.)' },
+            },
+            required: ['text'],
+          },
+        },
+        preset: {
+          type: 'string',
+          enum: ['wiki', 'github', 'filesystem', 'web', 'git', 'postgres'],
+          description: 'Deriver preset (default: wiki)',
+        },
+        extractLinks: {
+          type: 'boolean',
+          description: 'For the wiki preset: extract [[wikilinks]] into ALIAS records (default: true)',
+        },
+        namespace: {
+          type: 'string',
+          description: 'Optional explicit namespace override for all documents',
+        },
+      },
+      required: ['documents'],
+    },
+  },
 ];
 
 function jsonResponse(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
@@ -143,7 +191,7 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
   const blink = new Blink({ dbPath });
 
   const server = new Server(
-    { name: 'blink-query', version: '1.0.0' },
+    { name: 'blink-query', version: '2.0.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -288,6 +336,90 @@ export async function startMCPServer(dbPath?: string): Promise<void> {
       case 'blink_zones': {
         const zones = blink.zones();
         return jsonResponse({ count: zones.length, zones });
+      }
+
+      case 'blink_ingest': {
+        const documents = args?.documents as Array<{ id?: string; text: string; metadata?: Record<string, unknown> }>;
+        if (!Array.isArray(documents)) {
+          throw new McpError(ErrorCode.InvalidParams, 'documents must be an array');
+        }
+        if (documents.length === 0) {
+          throw new McpError(ErrorCode.InvalidParams, 'documents must not be empty');
+        }
+        if (documents.length > MAX_INGEST_DOCS) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            `documents exceeds maximum of ${MAX_INGEST_DOCS} per call`,
+          );
+        }
+
+        // Validate each doc and assign defaults
+        const docs: IngestDocument[] = documents.map((d, i) => {
+          if (typeof d.text !== 'string') {
+            throw new McpError(ErrorCode.InvalidParams, `documents[${i}].text must be a string`);
+          }
+          if (d.text.length > MAX_INGEST_TEXT_LENGTH) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              `documents[${i}].text exceeds maximum length of ${MAX_INGEST_TEXT_LENGTH}`,
+            );
+          }
+          return {
+            id: d.id ?? `mcp-${Date.now()}-${i}`,
+            text: d.text,
+            metadata: d.metadata ?? {},
+          };
+        });
+
+        const presetArg = (args?.preset as string) ?? 'wiki';
+        const PRESETS: Record<string, IngestOptions> = {
+          wiki: { ...WIKI_DERIVERS, extractLinks: true },
+          github: { ...GITHUB_DERIVERS },
+          filesystem: { ...FILESYSTEM_DERIVERS },
+          web: { ...WEB_DERIVERS },
+          git: { ...GIT_DERIVERS },
+          postgres: { ...POSTGRES_DERIVERS },
+        };
+        const preset = PRESETS[presetArg];
+        if (!preset) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            `Invalid preset: ${presetArg}. Must be one of: ${Object.keys(PRESETS).join(', ')}`,
+          );
+        }
+
+        // Override extractLinks if explicitly provided
+        if (typeof args?.extractLinks === 'boolean') {
+          preset.extractLinks = args.extractLinks;
+        }
+
+        // Optional namespace override
+        const namespaceOverride = args?.namespace as string | undefined;
+        if (namespaceOverride) {
+          if (namespaceOverride.length > MAX_PATH_LENGTH) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              `namespace exceeds maximum length of ${MAX_PATH_LENGTH}`,
+            );
+          }
+          preset.namespace = namespaceOverride;
+        }
+
+        // Always provide a default summarizer (extractive — no API key required)
+        if (!preset.summarize) {
+          preset.summarize = extractiveSummarize(500);
+        }
+
+        const result = await blink.ingest(docs, preset);
+        return jsonResponse({
+          count: result.records.length,
+          total: result.total,
+          elapsed: result.elapsed,
+          aliasesCreated: result.aliasesCreated,
+          unresolvedLinks: result.unresolvedLinks,
+          errors: result.errors.map(e => ({ id: e.document.id, error: e.error.message })),
+          records: result.records.map(r => ({ path: r.path, type: r.type, title: r.title })),
+        });
       }
 
       default:

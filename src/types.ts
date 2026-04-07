@@ -164,6 +164,12 @@ export interface IngestOptions {
   buildSources?: BuildSourcesCallback;
   /** Optional: callback fired after each batch is saved, useful for progress reporting */
   onBatchComplete?: (info: { processed: number; total: number; batchSize: number }) => void;
+  /**
+   * Optional: scan saved records' summaries for `[[wikilinks]]` and create
+   * ALIAS records for each resolved target. Defaults to false. Recommended
+   * for the WIKI_DERIVERS preset.
+   */
+  extractLinks?: boolean;
 }
 
 /** Result of an ingest operation */
@@ -172,6 +178,10 @@ export interface IngestResult {
   errors: Array<{ document: IngestDocument; error: Error }>;
   total: number;
   elapsed: number;
+  /** When extractLinks is set, the number of ALIAS records created from `[[wikilinks]]`. */
+  aliasesCreated?: number;
+  /** When extractLinks is set, target slugs that did not resolve to any record. */
+  unresolvedLinks?: string[];
 }
 
 // ─── Adapter config types ────────────────────────────────────

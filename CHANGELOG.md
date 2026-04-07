@@ -16,11 +16,11 @@ All notable changes to this project will be documented in this file.
 - `blink wiki init/ingest/lint` — subcommand group for wiki workflows
 
 ### Examples
-- `examples/llm-wiki/` — end-to-end wiki on a 30–50 file MCP ecosystem corpus
-- 4-way benchmark: blink-query vs Karpathy markdown+grep vs raw RAG vs qmd
+- `examples/llm-wiki/` — end-to-end wiki on a 30-file MCP ecosystem corpus
+- Retrieval comparison (`examples/llm-wiki/benchmark/`): grep vs blink BM25 over the same corpus, no external dependencies
 
 ### Documentation
-- First `README.md` — "typed wiki for LLMs" framing, Karpathy credit, benchmark, comparison table
+- First `README.md` — "typed wiki for LLMs" framing, benchmark section, quick start, install guide
 - `BLINK_WIKI.md` — schema document for LLM agents: namespace conventions, 5 record types, ingest/query/log/lint workflows, 4 worked example sessions
 
 ### Testing

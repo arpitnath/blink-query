@@ -1,30 +1,30 @@
-# llm-wiki — An LLM Wiki Example for blink-query
+# llm-wiki — An LLM wiki example for blink-query
 
-A runnable example showing how to use blink-query to build Andrej Karpathy's
-[LLM wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-with typed records, path resolution, and automatic `[[wikilink]]` extraction.
+A runnable example showing how to use blink-query to build a typed wiki from
+a corpus of markdown files. Demonstrates the `WIKI_DERIVERS` preset, path
+resolution, automatic `[[wikilink]]` extraction, and a retrieval benchmark.
 
 The corpus is 30 curated markdown files about the Model Context Protocol
-ecosystem — a meta-appropriate choice for a tool that ships as an MCP server.
+ecosystem — an on-brand choice for a tool that ships as an MCP server.
 
 ## What's in here
 
 ```
 examples/llm-wiki/
-├── sources/          # 24 raw source documents (MCP spec, SDK READMEs, etc.)
+├── sources/          # 24 source documents (MCP spec, SDK READMEs, etc.)
 │   └── *.md          # each with YAML frontmatter: title, source_url, date, type
-├── entity/           # 3 synthesized entity pages (people, orgs, protocols)
-├── topics/           # 2 synthesized topic overview pages
+├── entity/           # 3 entity pages (organizations, people, protocols)
+├── topics/           # 2 topic overview pages
 ├── log/              # ingest log entries, namespaced by date
 │   └── 2026-04-08/
-├── benchmark/        # 4-way benchmark vs Karpathy grep, raw RAG, and qmd
-│   ├── harness.ts    # runs all baselines
-│   ├── karpathy-baseline.ts  # markdown + grep
-│   ├── blink-baseline.ts     # blink-query BM25
-│   ├── questions.json        # 15 eval questions
-│   └── RESULTS.md            # benchmark numbers (run locally)
+├── benchmark/        # retrieval benchmark over the corpus
+│   ├── harness.ts    # runs both baselines
+│   ├── grep-baseline.ts      # recursive grep over markdown
+│   ├── blink-baseline.ts     # blink-query BM25 over typed records
+│   ├── questions.json        # 15 evaluation questions
+│   └── RESULTS.md            # committed comparison numbers
 ├── ingest.ts         # populate blink.db using WIKI_DERIVERS
-├── query.ts          # example agent queries via blink
+├── query.ts          # example queries via blink
 └── package.json
 ```
 
@@ -40,11 +40,11 @@ npm run ingest
 # Run example queries
 npm run query
 
-# Run the benchmark (karpathy + blink baselines by default)
+# Run the retrieval benchmark (grep vs blink BM25)
 npm run benchmark
 ```
 
-## How It Works
+## How it works
 
 The `ingest.ts` script walks the corpus with `loadDirectory()`, then calls
 `blink.ingest(docs, { ...WIKI_DERIVERS, extractLinks: true })`. The
@@ -52,12 +52,11 @@ The `ingest.ts` script walks the corpus with `loadDirectory()`, then calls
 
 - Files with `source_url:` in frontmatter → **SOURCE** records
 - `.md` files with headings and no `source_url` → **SUMMARY** records
-  (synthesized wiki pages)
 - Frontmatter `type: META` pages → **META** records with structured content
 - `.json` / `.yaml` files → **META** records
 
-`extractLinks: true` scans every record's summary for `[[wikilinks]]`,
-looks up each target by keyword search, and creates **ALIAS** records at
+`extractLinks: true` scans every record's summary for `[[wikilinks]]`, looks
+up each target by keyword search, and creates **ALIAS** records at
 `<source.path>/aliases/<target>` pointing to the resolved path.
 
 Namespace routing is automatic:
@@ -67,10 +66,10 @@ Namespace routing is automatic:
 - `topics/mcp-overview.md` → `topics/mcp-overview`
 - `log/2026-04-08/ingest.md` → `log/2026-04-08`
 
-## Using This Wiki With an LLM Agent
+## Using this wiki with an LLM agent
 
-Drop the top-level `BLINK_WIKI.md` file (at the repo root) into your LLM
-agent's project context. It documents the typed record model, the namespace
+Drop the top-level `BLINK_WIKI.md` file (at the repo root) into your agent's
+project context. It documents the typed record model, the namespace
 conventions, and the MCP tool names. Then configure your agent to use the
 blink-query MCP server:
 
@@ -90,7 +89,7 @@ Your agent can now resolve paths like:
 - `sources/` — a COLLECTION of all sources
 - `topics/mcp-overview/aliases/` — ALIAS records for `[[wikilinks]]` mentioned in the page
 
-## What This Example Demonstrates
+## What this example demonstrates
 
 1. **Typed records from frontmatter** — the `WIKI_DERIVERS` classifier turns
    metadata into the right record type without manual intervention.
@@ -100,31 +99,28 @@ Your agent can now resolve paths like:
    become ALIAS records pointing at the real targets.
 4. **Namespace browsing** — `blink.list('entity/')` returns every entity page
    without needing a pre-built index.
-5. **Benchmark comparison** — run the same 15 questions against grep, BM25
-   over typed records, raw RAG, and qmd.
+5. **Retrieval comparison** — run the same 15 questions against grep and
+   blink BM25 on the same corpus; see `benchmark/RESULTS.md` for the numbers.
 
-## Running the Benchmark Locally
+## Running the benchmark
 
-The Karpathy (grep) and blink baselines have no external dependencies and
-should always work. The RAG baseline needs Ollama with `nomic-embed-text` and
-`ministral-3` installed locally. The qmd baseline needs the `qmd` CLI
-installed separately.
+Both baselines run locally with no external dependencies beyond Node:
 
 ```bash
-# Minimum — karpathy + blink
+# Run both baselines
 npm run benchmark
 
-# Add RAG (needs Ollama)
-BASELINES=karpathy,blink,rag npm run benchmark
-
-# Add qmd (needs qmd installed)
-BASELINES=karpathy,blink,rag,qmd npm run benchmark
+# Or run individually
+npm run bench:grep
+npm run bench:blink
 ```
 
-See `benchmark/RESULTS.md` for the full comparison table.
+See `benchmark/RESULTS.md` for the committed numbers and `benchmark/questions.json`
+for the evaluation set.
 
-## Reference
+## Larger benchmark
 
-For the production-scale benchmark on 3,890 GitHub issues (the numbers cited
-in the top-level README), see `examples/pathfinder/` — that benchmark shipped
-with blink-query v1.1.0.
+For a production-scale benchmark on 3,890 GitHub issues, see
+`examples/pathfinder/` — that benchmark shipped with blink-query v1.1.0 and
+compares blink-query BM25 against a vectra-based RAG pipeline with local
+Ollama.

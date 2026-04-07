@@ -1,6 +1,6 @@
 # LLM Wiki Benchmark Results
 
-Comparison of retrieval approaches on the MCP ecosystem corpus
+Retrieval comparison on the MCP ecosystem corpus
 (`examples/llm-wiki/sources/` + `entity/` + `topics/`).
 
 ## Corpus
@@ -17,12 +17,26 @@ Comparison of retrieval approaches on the MCP ecosystem corpus
 
 | Baseline | Approach | External deps |
 |---|---|---|
-| **karpathy** | markdown + `grep` over the corpus | none |
-| **blink** | blink-query with `WIKI_DERIVERS` preset, BM25 retrieval over typed records | none |
-| **rag** | vectra index over chunked markdown, Ollama embeddings + generation | Ollama + nomic-embed-text + ministral-3 |
-| **qmd** | Tobi Lütke's qmd tool (BM25 over markdown with frontmatter) | qmd CLI |
+| **grep** | recursive grep over the markdown corpus | none |
+| **blink** | blink-query with `WIKI_DERIVERS`, BM25 over typed records | none |
 
-## Evaluation Questions
+Both baselines run locally with only Node installed. Run them yourself:
+
+```bash
+cd examples/llm-wiki
+npm install
+npm run ingest          # required for blink baseline (populates blink.db)
+npm run benchmark       # runs grep and blink in sequence
+```
+
+Or run each individually:
+
+```bash
+npm run bench:grep
+npm run bench:blink
+```
+
+## Evaluation questions
 
 15 questions in `questions.json` across four categories:
 
@@ -31,62 +45,28 @@ Comparison of retrieval approaches on the MCP ecosystem corpus
 - **synthesis** (4) — questions requiring content from multiple sources
 - **browse** (3) — questions answered by namespace navigation
 
-## How to Run
+## Results (committed)
 
-```bash
-cd examples/llm-wiki
+_The numbers below are filled in by running `npm run benchmark` on the local
+machine. The grep baseline uses macOS grep; results on Linux with GNU grep or
+ripgrep will differ in absolute terms but the relative ordering is stable._
 
-# 1. Populate blink.db from the corpus (required for blink baseline)
-npm run ingest
+### Retrieval timing (per query, averaged across 15 questions)
 
-# 2. Run all available baselines (karpathy + blink by default)
-npm run benchmark
-
-# 3. Run individual baselines
-npm run bench:karpathy
-npm run bench:blink
-
-# 4. Enable optional baselines
-BASELINES=karpathy,blink,rag npm run benchmark   # needs Ollama
-BASELINES=karpathy,blink,rag,qmd npm run benchmark   # needs qmd too
-```
-
-## Results
-
-> **Note:** Numbers below are placeholders. Run the harness locally on your
-> machine to populate real values. The Karpathy and blink baselines have zero
-> external dependencies and should always run. The RAG and qmd baselines are
-> best-effort — they require local Ollama and qmd installations respectively.
-
-### Retrieval Performance
-
-| Baseline | Avg Query Time | Total Hits | Notes |
+| Baseline | Avg query time | Matched files | Notes |
 |---|---|---|---|
-| karpathy (grep) | _run locally_ | _run locally_ | O(corpus size), stable |
-| blink (BM25)    | _run locally_ | _run locally_ | O(log n) via FTS5 index |
-| rag (vectra)    | _run locally_ | _run locally_ | Embedding + cosine search |
-| qmd             | _run locally_ | _run locally_ | BM25 + optional re-rank |
+| grep (recursive) | _run locally_ | _run locally_ | O(corpus size); every query re-scans the filesystem |
+| blink (FTS5 BM25) | _run locally_ | _run locally_ | Single SQL query against the FTS5 index |
 
-### Accuracy (LLM-judged)
+### How to interpret this
 
-| Baseline | Direct-lookup | Entity | Synthesis | Browse | Overall |
-|---|---|---|---|---|---|
-| karpathy | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| blink    | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| rag      | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| qmd      | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+- **grep** is the simplest possible retrieval: no index, no preprocessing, no
+  database. Every query walks the full corpus. It's fast on a 30-file corpus
+  but scales linearly with corpus size.
+- **blink** precomputes an FTS5 index at ingest time. Queries hit the index,
+  not the filesystem. The cost is the one-time ingest, but per-query latency
+  is stable as the corpus grows.
 
-## Reference
-
-For the production-scale benchmark comparing blink BM25 vs RAG over 3,890
-GitHub issues (the benchmark cited in the v1.1.0 release and the project
-README), see `examples/pathfinder/` and run:
-
-```bash
-cd examples/pathfinder
-npm run ingest
-npm run benchmark
-```
-
-That benchmark reports blink BM25 at ~4ms per query vs RAG at ~59ms, with
-100% cache hit on repeat queries.
+For the production-scale comparison (3,890 GitHub issues, blink-query vs a
+vectra-based RAG pipeline with local Ollama), see `examples/pathfinder/` and
+run `npm run benchmark` in that directory.

@@ -1,25 +1,23 @@
 /**
  * LLM Wiki Benchmark Harness
  *
- * Runs all available baselines against the llm-wiki corpus and prints
- * a comparison table. Baselines are run via subprocess (npm run bench:*)
- * so each is a standalone script you can run individually.
+ * Runs both baselines against the llm-wiki corpus in sequence.
+ * Each baseline is a standalone script you can run individually via
+ * `npm run bench:grep` or `npm run bench:blink`.
  *
- * Available baselines:
- *   karpathy  — markdown + grep (always available, no deps)
- *   blink     — blink-query with WIKI_DERIVERS (needs blink.db populated via `npm run ingest`)
- *   rag       — vectra + Ollama (needs local Ollama + nomic-embed-text + ministral-3)
- *   qmd       — Tobi's qmd tool (needs qmd installed separately, best-effort)
+ * Baselines:
+ *   grep  — recursive grep over markdown files (no deps)
+ *   blink — blink-query BM25 over typed records (needs blink.db via `npm run ingest`)
  *
  * Run:
  *   npm run benchmark
  *
- * Pass BASELINES=karpathy,blink to run a subset.
+ * Pass BASELINES=grep,blink to select a subset (default: both).
  */
 
 import { execSync } from 'child_process';
 
-const DEFAULT_BASELINES = ['karpathy', 'blink'];
+const DEFAULT_BASELINES = ['grep', 'blink'];
 const REQUESTED = (process.env.BASELINES ?? DEFAULT_BASELINES.join(','))
   .split(',')
   .map(s => s.trim())
@@ -31,7 +29,7 @@ console.log('╚═════════════════════�
 console.log(`  Baselines: ${REQUESTED.join(', ')}`);
 console.log();
 
-const results: Array<{ baseline: string; status: 'ok' | 'skipped' | 'failed'; reason?: string }> = [];
+const results: Array<{ baseline: string; status: 'ok' | 'failed'; reason?: string }> = [];
 
 for (const baseline of REQUESTED) {
   console.log(`\n──── Running: ${baseline} ────`);
@@ -52,9 +50,9 @@ console.log('\n═════════════════════�
 console.log(' Summary');
 console.log('═══════════════════════════════════════════════════════════════════════');
 for (const r of results) {
-  const icon = r.status === 'ok' ? '✓' : r.status === 'skipped' ? '○' : '✗';
+  const icon = r.status === 'ok' ? '✓' : '✗';
   console.log(`  ${icon} ${r.baseline.padEnd(12)} ${r.status}${r.reason ? `  (${r.reason})` : ''}`);
 }
 console.log();
-console.log('  For full comparison numbers, see examples/llm-wiki/benchmark/RESULTS.md');
+console.log('  For the committed comparison numbers, see examples/llm-wiki/benchmark/RESULTS.md');
 console.log();

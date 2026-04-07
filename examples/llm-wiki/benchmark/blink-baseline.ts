@@ -1,9 +1,9 @@
 /**
  * Blink baseline: BM25 retrieval over WIKI_DERIVERS-classified typed records.
  *
- * Runs the same 15 questions as karpathy-baseline.ts, but uses blink-query's
+ * Runs the same 15 questions as grep-baseline.ts, but uses blink-query's
  * FTS5 index and path-based resolution instead of grep. Reports per-question
- * retrieval time, total hits, and the record type mix of the top result.
+ * retrieval time, total hits, and the top-hit path.
  *
  * Prerequisite: run `npm run ingest` first to populate blink.db from the corpus.
  *

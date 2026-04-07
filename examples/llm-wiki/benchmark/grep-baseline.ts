@@ -1,21 +1,17 @@
 /**
- * Karpathy baseline: literal markdown + grep approach.
+ * Grep baseline: plain markdown + recursive grep over the corpus.
  *
- * This mirrors the pattern Andrej Karpathy describes in the LLM wiki gist:
- * maintain a corpus of plain markdown files, use grep / ripgrep for search,
- * and let the LLM read the matched files directly. No index, no classifier,
- * no database — just the filesystem and a text search tool.
+ * No index, no classifier, no database — just the filesystem and a text
+ * search tool. This is the simplest possible retrieval approach against
+ * which typed-record retrieval (blink-query) is measured.
  *
- * For each question in questions.json, we:
- *   1. Pick 2-3 keyword terms from the question
- *   2. grep the corpus for lines matching those terms (case-insensitive)
- *   3. Report: number of matches, time taken
- *
- * This is intentionally simple. It's the baseline against which typed-record
- * retrieval (blink-query) and embedding-based RAG are measured.
+ * For each question in questions.json:
+ *   1. Extract 2-3 keyword terms (stopword-stripped)
+ *   2. grep the corpus for files matching those terms (case-insensitive)
+ *   3. Report: matched file count, time taken
  *
  * Run:
- *   node --import tsx/esm benchmark/karpathy-baseline.ts
+ *   node --import tsx/esm benchmark/grep-baseline.ts
  */
 
 import { readFileSync } from 'fs';
@@ -82,7 +78,7 @@ async function main() {
   const data: QuestionsFile = JSON.parse(raw);
 
   console.log('\n═══════════════════════════════════════════════════════════════════════');
-  console.log(' KARPATHY BASELINE — markdown + grep');
+  console.log(' GREP BASELINE — recursive grep over markdown files');
   console.log('═══════════════════════════════════════════════════════════════════════');
   console.log(`  Corpus:    ${CORPUS_DIR}`);
   console.log(`  Questions: ${data.questions.length}`);
@@ -120,6 +116,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Karpathy baseline failed:', err);
+  console.error('Grep baseline failed:', err);
   process.exit(1);
 });

@@ -8,7 +8,7 @@
     "ingest": "node --import tsx/esm ingest.ts",
     "query": "node --import tsx/esm query.ts",
     "benchmark": "node --import tsx/esm benchmark/harness.ts",
-    "bench:karpathy": "node --import tsx/esm benchmark/karpathy-baseline.ts",
+    "bench:grep": "node --import tsx/esm benchmark/grep-baseline.ts",
     "bench:blink": "node --import tsx/esm benchmark/blink-baseline.ts"
   },
   "dependencies": {

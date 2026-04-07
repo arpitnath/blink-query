@@ -2,9 +2,9 @@
 
 **A typed wiki for LLMs — markdown on disk, resolution in the library.**
 
-[Andrej Karpathy's LLM wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) showed a clean pattern: keep a folder of markdown files, let the agent read and grep them, build up institutional memory over time. I ran it for a while and kept wanting a few things: a way to say what each file *is* (summary, log entry, source reference), a deterministic lookup path that didn't require guessing filenames, and a query interface the agent could use without spawning a shell. So I built them as a library on top of the same markdown files.
+The LLM wiki pattern ([see the original gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)) is a clean idea: keep a folder of markdown files, let the agent read and grep them, build up institutional memory over time. I ran it for a while and kept wanting a few things: a way to say what each file *is* (summary, log entry, source reference), a deterministic lookup path that didn't require guessing filenames, and a query interface the agent could use without spawning a shell. So I built them as a library on top of the same markdown files.
 
-blink-query is that library. Markdown on disk, typed records in SQLite, path resolution at query time, FTS5 search, a query DSL, and an MCP server so your agent can call it directly. If you want to grep the files yourself, grep them — nothing's hidden. The library is just a faster, typed path on top.
+blink-query is that library. Markdown on disk, typed records in SQLite, path resolution at query time, FTS5 search, a query DSL, and an MCP server so your agent can call it directly. If you want to grep the files yourself, grep them — nothing's hidden. The library is a faster, typed path on top.
 
 ---
 
@@ -22,7 +22,7 @@ blink wiki init my-wiki
 
 ## Benchmark
 
-The production-scale numbers cited below come from the v1.1.0 pathfinder benchmark: 3,890 real GitHub issues from Next.js, React, Vite, and Svelte, evaluated head-to-head against a vectra-based RAG pipeline over the same corpus, on a local Ollama setup. Reproducible with `cd examples/pathfinder && npm run ingest && npm run benchmark`.
+The production-scale numbers below come from the v1.1.0 pathfinder benchmark: 3,890 real GitHub issues from Next.js, React, Vite, and Svelte, evaluated head-to-head against a vectra-based RAG pipeline over the same corpus on a local Ollama setup. Reproducible with `cd examples/pathfinder && npm run ingest && npm run benchmark`.
 
 | | blink-query (BM25) | RAG (vectra) |
 |---|---|---|
@@ -33,23 +33,21 @@ The production-scale numbers cited below come from the v1.1.0 pathfinder benchma
 
 **~15× faster retrieval, and the blink side *learns* across queries** — records re-resolve in O(1) after the first hit. Full tables, per-question breakdown, and the learning-cache pass are in [`examples/pathfinder/src/benchmark.ts`](examples/pathfinder/src/benchmark.ts).
 
-The new v2.0.0 wiki-specific benchmark (Karpathy grep vs blink BM25 vs RAG vs qmd, 15 questions on the MCP ecosystem corpus) is in [`examples/llm-wiki/benchmark/`](examples/llm-wiki/benchmark/). The Karpathy and blink baselines have zero external dependencies and should always work — RAG and qmd are best-effort. See [`examples/llm-wiki/benchmark/RESULTS.md`](examples/llm-wiki/benchmark/RESULTS.md) for the template and how to run it locally.
+A smaller wiki-specific retrieval comparison (recursive grep vs blink BM25 on 30 curated markdown files) ships in [`examples/llm-wiki/benchmark/`](examples/llm-wiki/benchmark/). Both baselines run locally with only Node installed — see [`examples/llm-wiki/benchmark/RESULTS.md`](examples/llm-wiki/benchmark/RESULTS.md).
 
 ---
 
-## How it compares
+## What this is (and isn't)
 
-| | blink-query | [qmd](https://github.com/quinnlangille/qmd) | palinode | raw markdown + grep |
-|---|---|---|---|---|
-| Typed records | ✓ (5 types) | — | — | — |
-| Path resolution | ✓ deterministic | — | — | — |
-| Query DSL | ✓ | — | — | — |
-| MCP server | ✓ 10 tools | — | — | — |
-| Substrate | SQLite | index over .md | git-native | filesystem |
-| Benchmark | see above | — | — | see above |
-| License | MIT | MIT | MIT | — |
+blink-query is a library, not a framework or a replacement. It's additive on top of plain markdown files:
 
-**qmd** is a search index over markdown files. blink-query is a resolution layer with a typed store and a query DSL. Different jobs — they can coexist. **palinode** is agent memory with git-native compaction. blink-query is a knowledge resolution layer for wikis and source ingestion. **Raw markdown + grep** is Karpathy's pattern — still valid, blink-query is additive on top of it.
+- **Your files stay where they are.** Markdown in `sources/`, `entity/`, `topics/`, `log/<date>/`. You can grep them, open them in any editor, commit them to git, nothing about them is opaque.
+- **The library adds an index, types, and a query interface.** Think of blink-query as a deterministic faster path on top of the same files — not a replacement for them.
+- **No embeddings.** BM25 / FTS5 only. If you want semantic retrieval, you can run blink-query alongside a vector store and pick whichever answer is better for the query.
+- **No cloud.** SQLite file on disk, MCP server over stdio, runs entirely on your machine.
+- **No magic.** Ingestion is rule-based derivers you can override. Classification is based on frontmatter you control. The query DSL is a Peggy grammar you can read.
+
+If you want raw markdown + grep, the files still work that way. If you want typed records with an index, install the library.
 
 ---
 

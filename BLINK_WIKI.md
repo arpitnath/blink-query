@@ -6,7 +6,7 @@
 
 ## 30-second mental model
 
-This is [Karpathy's LLM wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — a folder of markdown files the agent reads and updates — extended with typed records, path resolution, and an FTS5 index.
+This is the LLM wiki pattern ([see the original gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)) — a folder of markdown files the agent reads and updates — extended with typed records, path resolution, and an FTS5 index.
 
 Same markdown files. Same ergonomics. Same "grep it if you want" escape hatch. The library adds:
 - **Types** — each record has a consumption instruction (SUMMARY, META, SOURCE, ALIAS, COLLECTION)
@@ -19,9 +19,9 @@ Your wiki is still markdown on disk. blink-query is the resolution layer on top.
 
 ---
 
-## Karpathy pattern → blink-query primitives
+## Wiki pattern → blink-query primitives
 
-| Karpathy concept | blink-query primitive |
+| Wiki concept | blink-query primitive |
 |---|---|
 | Wiki page (overview, summary) | SUMMARY record |
 | Entity page (structured attributes) | META record with JSON content |

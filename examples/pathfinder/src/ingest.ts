@@ -1,29 +1,38 @@
 /**
- * Pathfinder ingest pipeline.
+ * Pathfinder ingest pipeline — multi-repo.
  *
- * Phase 1 — Blink: fetch GitHub issues and save as knowledge records in blink.db
- * Phase 2 — Vectra: read all records, chunk title+summary, embed via Ollama, build vector index
+ * Phase 1 — Blink: fetch GitHub issues from multiple repos into blink.db
+ * Phase 2 — Vectra: chunk all records, embed via Ollama, build vector index
  *
  * Config (env vars):
- *   REPO         GitHub repo in owner/repo format (default: vercel/next.js)
- *   MAX_PAGES    pages to fetch from GitHub API (default: 5)
+ *   REPOS        Comma-separated repos (default: 4 popular repos)
+ *   MAX_PAGES    Pages per repo (default: 30)
  *   BLINK_DB     SQLite file path (default: ./data/blink.db)
  *   VECTRA_DIR   Vectra index directory (default: ./data/vectra-index)
+ *   GITHUB_TOKEN GitHub PAT for higher rate limits
  *
  * Run:
  *   npm run ingest
- *   REPO=facebook/react MAX_PAGES=3 npm run ingest
+ *   REPOS=facebook/react,vitejs/vite MAX_PAGES=10 npm run ingest
  */
 
 import { mkdirSync } from 'fs';
 import { Blink, GITHUB_DERIVERS, extractiveSummarize } from 'blink-query';
+import type { RecordType } from 'blink-query';
 import { LocalIndex } from 'vectra';
 import { OLLAMA_BASE, EMBED_MODEL } from './model.js';
 
 // --- Config ---
 
-const REPO = process.env.REPO ?? 'vercel/next.js';
-const MAX_PAGES = parseInt(process.env.MAX_PAGES ?? '5', 10);
+const DEFAULT_REPOS = [
+  'vercel/next.js',
+  'facebook/react',
+  'vitejs/vite',
+  'sveltejs/svelte',
+];
+
+const REPOS = (process.env.REPOS ?? DEFAULT_REPOS.join(',')).split(',').map((r) => r.trim());
+const MAX_PAGES = parseInt(process.env.MAX_PAGES ?? '30', 10);
 const BLINK_DB = process.env.BLINK_DB ?? './data/blink.db';
 const VECTRA_DIR = process.env.VECTRA_DIR ?? './data/vectra-index';
 
@@ -53,6 +62,28 @@ async function embedBatch(texts: string[]): Promise<number[][]> {
   return data.embeddings;
 }
 
+// --- GitHub issue classifier ---
+
+/** Rule-based type classification for GitHub issues. */
+function githubClassify(_text: string, metadata: Record<string, unknown>): RecordType {
+  const state = metadata.state as string;
+  const labels = ((metadata.labels as string[]) || []).map((l) => l.toLowerCase());
+  const text = _text.toLowerCase();
+
+  // Duplicate issues
+  if (labels.includes('duplicate') || text.includes('duplicate of #')) return 'SOURCE';
+
+  // Config/settings-related issues → META
+  if (labels.some((l) => l.includes('config') || l.includes('setting') || l.includes('next.config')))
+    return 'META';
+
+  // Closed issues = resolved knowledge → SUMMARY
+  if (state === 'closed') return 'SUMMARY';
+
+  // Open issues = unresolved, need full context → SOURCE
+  return 'SOURCE';
+}
+
 // --- Main ---
 
 async function main() {
@@ -60,30 +91,54 @@ async function main() {
 
   mkdirSync('./data', { recursive: true });
 
-  console.log('=== Pathfinder Ingest ===');
-  console.log(`Repo:      ${REPO}`);
-  console.log(`Max pages: ${MAX_PAGES}`);
+  console.log('=== Pathfinder Ingest (multi-repo) ===');
+  console.log(`Repos:     ${REPOS.join(', ')}`);
+  console.log(`Max pages: ${MAX_PAGES} per repo`);
   console.log(`Blink DB:  ${BLINK_DB}`);
   console.log(`Vectra:    ${VECTRA_DIR}\n`);
 
-  // ─── Phase 1: Blink ingest ────────────────────────────────
-
-  console.log('Phase 1: Ingesting GitHub issues into Blink...');
-
   const blink = new Blink({ dbPath: BLINK_DB });
 
-  const result = await blink.ingestFromGitHub(
-    { repo: REPO, maxPages: MAX_PAGES, state: 'all' },
-    {
-      ...GITHUB_DERIVERS,
-      summarize: extractiveSummarize(500),
-      onBatchComplete: ({ processed, total }) => {
-        process.stdout.write(`\r  Processed ${processed}/${total} issues...`);
-      },
-    },
-  );
+  // ─── Phase 1: Blink ingest (per repo) ─────────────────────
 
-  console.log(`\nPhase 1 done: ${result.records.length} records saved (${result.elapsed}ms)\n`);
+  console.log('Phase 1: Ingesting GitHub issues into Blink...\n');
+
+  let totalRecords = 0;
+  let totalElapsed = 0;
+
+  for (const repo of REPOS) {
+    console.log(`  [${repo}]`);
+
+    try {
+      const result = await blink.ingestFromGitHub(
+        { repo, maxPages: MAX_PAGES, state: 'all' },
+        {
+          ...GITHUB_DERIVERS,
+          classify: githubClassify,
+          summarize: extractiveSummarize(500),
+          onBatchComplete: ({ processed, total }) => {
+            process.stdout.write(`\r    ${processed}/${total} issues...`);
+          },
+        },
+      );
+
+      totalRecords += result.records.length;
+      totalElapsed += result.elapsed;
+      console.log(`\r    ${result.records.length} records (${result.elapsed}ms)`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`\r    FAILED: ${msg}`);
+    }
+  }
+
+  // Count types across all repos
+  const allRecs = blink.list('github', 'recent', { limit: 10000 });
+  const typeCounts: Record<string, number> = {};
+  for (const r of allRecs) typeCounts[r.type] = (typeCounts[r.type] || 0) + 1;
+
+  const zones = blink.zones();
+  console.log(`\nPhase 1 done: ${totalRecords} records across ${zones.length} zones (${totalElapsed}ms)`);
+  console.log(`  Types: ${Object.entries(typeCounts).map(([t, c]) => `${t}=${c}`).join(', ')}\n`);
 
   // ─── Phase 2: Vectra vector index ────────────────────────
 
@@ -93,8 +148,7 @@ async function main() {
   await index.createIndex({ version: 1, deleteIfExists: true });
 
   // Gather all records from every zone
-  const zones = blink.zones();
-  const allRecords = zones.flatMap((z) => blink.list(z.path, 'recent', { limit: 5000 }));
+  const allRecords = zones.flatMap((z) => blink.list(z.path, 'recent', { limit: 10000 }));
   console.log(`  ${allRecords.length} records across ${zones.length} zones`);
 
   // Chunk each record's title + summary
@@ -139,8 +193,11 @@ async function main() {
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n\n=== Done in ${elapsed}s ===`);
-  console.log(`  Records ingested: ${result.records.length}`);
+  console.log(`  Repos:            ${REPOS.length}`);
+  console.log(`  Records ingested: ${totalRecords}`);
+  console.log(`  Zones:            ${zones.length}`);
   console.log(`  Chunks indexed:   ${inserted}`);
+  console.log(`  Types:            ${Object.entries(typeCounts).map(([t, c]) => `${t}=${c}`).join(', ')}`);
 
   blink.close();
 }

@@ -49,7 +49,8 @@ RECORD TYPE SEMANTICS:
 NXDOMAIN responses include "suggestions" — nearby paths that do exist. Use them to navigate.
 
 LEARNING CACHE: After answering via blink_search, ALWAYS call blink_save to cache your answer.
-Use namespace "cache/answers" and type SUMMARY with relevant tags. This makes future lookups instant.
+Use namespace "cache/answers", set the title to the EXACT user question verbatim, and type SUMMARY.
+This ensures the exact same question resolves instantly next time via cache/answers/<slug-of-question>.
 
 Be concise. Stop when you have a confident answer.`;
 

@@ -1,0 +1,23 @@
+[
+  { "id": "direct-1", "category": "direct", "q": "What turbopack issues exist in Next.js?" },
+  { "id": "direct-2", "category": "direct", "q": "What webpack-related bugs are reported in Next.js?" },
+  { "id": "direct-3", "category": "direct", "q": "What Vite build issues have been reported?" },
+  { "id": "direct-4", "category": "direct", "q": "What React concurrent mode issues exist?" },
+  { "id": "direct-5", "category": "direct", "q": "What Svelte compiler bugs are known?" },
+
+  { "id": "browse-1", "category": "browse", "q": "What categories of Next.js issues are tracked?" },
+  { "id": "browse-2", "category": "browse", "q": "What types of issues exist in the React repo?" },
+  { "id": "browse-3", "category": "browse", "q": "How many issue categories are tracked across all repos?" },
+
+  { "id": "search-1", "category": "search", "q": "Any issues mentioning hydration mismatch?" },
+  { "id": "search-2", "category": "search", "q": "What problems involve server-side rendering?" },
+  { "id": "search-3", "category": "search", "q": "Are there issues with hot module replacement?" },
+  { "id": "search-4", "category": "search", "q": "What TypeScript integration issues exist?" },
+
+  { "id": "cross-1", "category": "cross-repo", "q": "Which frameworks have routing-related bugs?" },
+  { "id": "cross-2", "category": "cross-repo", "q": "What performance issues exist across React and Next.js?" },
+
+  { "id": "cache-1", "category": "cache", "q": "What turbopack issues exist in Next.js?" },
+  { "id": "cache-2", "category": "cache", "q": "What Vite build issues have been reported?" },
+  { "id": "cache-3", "category": "cache", "q": "Any issues mentioning hydration mismatch?" }
+]

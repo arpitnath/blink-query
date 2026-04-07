@@ -1,359 +1,206 @@
-# Blink
+# blink-query
 
-**DNS-inspired knowledge resolution layer for AI agents**
+**A typed wiki for LLMs — markdown on disk, resolution in the library.**
 
-[![Tests](https://img.shields.io/badge/tests-320%20passing-success)]() [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)]() [![License](https://img.shields.io/badge/license-MIT-blue)]() [![npm](https://img.shields.io/npm/v/blink-query)]()
+[Andrej Karpathy's LLM wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) showed a clean pattern: keep a folder of markdown files, let the agent read and grep them, build up institutional memory over time. I ran it for a while and kept wanting a few things: a way to say what each file *is* (summary, log entry, source reference), a deterministic lookup path that didn't require guessing filenames, and a query interface the agent could use without spawning a shell. So I built them as a library on top of the same markdown files.
 
-Blink sits between your data and your AI agent. It turns documents from anywhere — files, databases, web pages, git repos — into typed knowledge records with DNS-like resolution semantics.
-
-```
-Your Data → [Load → Store → Find] → Your Agent
-```
+blink-query is that library. Markdown on disk, typed records in SQLite, path resolution at query time, FTS5 search, a query DSL, and an MCP server so your agent can call it directly. If you want to grep the files yourself, grep them — nothing's hidden. The library is just a faster, typed path on top.
 
 ---
 
-## Quick Start
-
-### Installation
+## Quick start
 
 ```bash
-npm install blink-query
-
-# Optional: for PDF/DOCX support
-npm install llamaindex @llamaindex/readers
-
-# Optional: for PostgreSQL ingestion
-npm install pg
+npm install -g blink-query
+blink init
+blink wiki init my-wiki
 ```
 
-### Library API
+`blink init` auto-detects your agent environment (Claude Desktop, Claude Code, Cursor, Codex) and writes the MCP config file. `blink wiki init my-wiki` creates the folder structure and ingests any existing markdown.
+
+---
+
+## Benchmark
+
+> 4-way comparison on a 30–50 file MCP ecosystem corpus. Full numbers in [`examples/llm-wiki/benchmark/RESULTS.md`](examples/llm-wiki/benchmark/RESULTS.md).
+
+<BENCHMARK_NUMBERS>
+
+---
+
+## How it compares
+
+| | blink-query | [qmd](https://github.com/quinnlangille/qmd) | palinode | raw markdown + grep |
+|---|---|---|---|---|
+| Typed records | ✓ (5 types) | — | — | — |
+| Path resolution | ✓ deterministic | — | — | — |
+| Query DSL | ✓ | — | — | — |
+| MCP server | ✓ 10 tools | — | — | — |
+| Substrate | SQLite | index over .md | git-native | filesystem |
+| Benchmark | see above | — | — | see above |
+| License | MIT | MIT | MIT | — |
+
+**qmd** is a search index over markdown files. blink-query is a resolution layer with a typed store and a query DSL. Different jobs — they can coexist. **palinode** is agent memory with git-native compaction. blink-query is a knowledge resolution layer for wikis and source ingestion. **Raw markdown + grep** is Karpathy's pattern — still valid, blink-query is additive on top of it.
+
+---
+
+## Install in your agent
+
+<INSTALL_SNIPPETS>
+
+For manual setup, add the MCP server to your agent config:
+
+```json
+{
+  "mcpServers": {
+    "blink-query": {
+      "command": "blink",
+      "args": ["serve", "--db", "./wiki.db"]
+    }
+  }
+}
+```
+
+The MCP server exposes 10 tools: `blink_resolve`, `blink_save`, `blink_search`, `blink_list`, `blink_query`, `blink_get`, `blink_delete`, `blink_move`, `blink_zones`, `blink_ingest`.
+
+Drop [`BLINK_WIKI.md`](BLINK_WIKI.md) into your project root (or add it to your agent's system prompt) so the agent knows how to use the wiki pattern.
+
+---
+
+## What you get
+
+Five record types. The type is a consumption instruction — it tells the agent *how to use* the record, not what it's about. Content carries the domain semantics.
+
+**SUMMARY** — read the summary directly, you have what you need.
+Use for processed wiki pages, entity descriptions, topic overviews. The agent doesn't need to fetch anything else.
+
+**META** — structured data (JSON content field).
+Use for configuration, log entries, session state, entity attributes. The agent parses `content` as JSON.
+
+**SOURCE** — summary here, fetch the source if you need depth.
+Use for references to external documents: papers, URLs, git files, API specs. Summary gives enough to decide whether to fetch.
+
+**ALIAS** — follow the redirect to the target record.
+Use for cross-linking. `[[wikilinks]]` in your markdown auto-extract to ALIAS records on ingest.
+
+**COLLECTION** — browse children, pick what's relevant.
+Use for namespace indexes. Auto-generated when you resolve a namespace path that has no direct record.
+
+---
+
+## Example wiki
+
+[`examples/llm-wiki/`](examples/llm-wiki/) is a complete end-to-end example: a 30–50 file MCP ecosystem corpus ingested, queried, and benchmarked against markdown+grep and RAG baselines.
+
+---
+
+## Schema doc
+
+[`BLINK_WIKI.md`](BLINK_WIKI.md) is the document your LLM agent reads to understand how to use blink-query as a wiki. It covers namespace conventions, all five record types with examples, ingest/query/log/lint workflows, and four worked example sessions. Drop it in your project root.
+
+---
+
+## Library API
 
 ```typescript
 import { Blink, extractiveSummarize } from 'blink-query';
 
-const blink = new Blink();
+const blink = new Blink({ dbPath: './wiki.db' });
 
-// Ingest a directory
-await blink.ingestDirectory('./docs', {
+// Ingest a directory of markdown files
+await blink.ingestDirectory('./my-wiki', {
   summarize: extractiveSummarize(500),
-  namespacePrefix: 'knowledge'
+  namespacePrefix: 'wiki'
 });
 
-// Resolve knowledge
-const response = blink.resolve('knowledge/readme');
-console.log(response.record.summary);
+// Resolve a path — deterministic O(1) lookup
+const response = blink.resolve('wiki/mcp-protocol');
+if (response.status === 'OK') {
+  console.log(response.record.summary);
+}
 
-// Query with DSL
-const results = blink.query('knowledge where type = "SUMMARY" limit 5');
+// Search — BM25/FTS5
+const results = blink.search('tool call protocol');
 
-// Search
-const found = blink.search('authentication jwt');
+// Query DSL
+const summaries = blink.query('wiki where type = "SUMMARY" order by hit_count desc limit 10');
 
 blink.close();
 ```
 
-### CLI
+All CRUD operations are synchronous (`resolve`, `get`, `save`, `delete`, `move`, `search`, `list`, `query`). Only ingestion is async.
+
+---
+
+## CLI
 
 ```bash
-# Ingest files
-blink ingest ./my-docs --prefix knowledge --tags "v1,docs"
+# Wiki workflows
+blink wiki init my-wiki          # scaffold + ingest
+blink wiki ingest ./my-wiki      # re-ingest after changes
+blink wiki lint                  # find STALE, NXDOMAIN, orphans
 
-# Resolve a path
-blink resolve knowledge/readme
+# Core operations
+blink resolve wiki/mcp-protocol  # resolve a path
+blink search "tool call protocol"
+blink query 'wiki where type = "SUMMARY" limit 10'
+blink list wiki --limit 20
 
-# Search
-blink search "authentication api"
+# Agent setup
+blink init                       # write MCP config for detected agent
+blink doctor                     # post-install diagnostic
 
-# Query with DSL
-blink query 'knowledge where tags contains "urgent" order by hit_count desc'
-
-# List records in a namespace
-blink list knowledge --limit 20 --offset 0
-
-# Manage zones
+# Data management
+blink ingest ./docs --prefix wiki
+blink move wiki/old wiki/new
+blink delete wiki/outdated
 blink zones
-
-# Move and delete
-blink move knowledge/old-path knowledge/new-path
-blink delete knowledge/outdated-doc
 ```
 
-All CLI commands support `--json` for machine-readable output and `--db` to target a specific database file.
-
-### MCP Server (for AI agents)
-
-```bash
-blink serve
-# AI agent connects via stdio MCP protocol
-```
-
-9 tools available: `blink_resolve`, `blink_save`, `blink_search`, `blink_list`, `blink_query`, `blink_get`, `blink_delete`, `blink_move`, `blink_zones`.
-
-### In-Memory Mode (for testing)
-
-```typescript
-const blink = new Blink({ dbPath: ':memory:' });
-```
+All commands support `--json` for machine-readable output and `--db` for a custom database path.
 
 ---
 
-## The 5 Record Types
+## Scope
 
-| Type | What it tells the agent | Example |
-|------|------------------------|---------|
-| **SUMMARY** | Read this directly, you have what you need | Project overview, meeting notes |
-| **META** | Structured data, parse it | `{ status: "active", contributors: 12 }` |
-| **COLLECTION** | Browse children, pick what's relevant | Table of contents, directory listings |
-| **SOURCE** | Summary here, fetch source if you need depth | Large files, external APIs |
-| **ALIAS** | Follow the redirect to the real record | Shortcuts, renames |
-
-**Core innovation**: Type carries consumption instruction, content carries domain semantics.
+blink-query handles:
+- Markdown and plain text (primary)
+- PDF (coming in v2.1)
+- PostgreSQL tables (via `loadFromPostgres`)
+- Web URLs (via `loadFromURL`)
+- Git repositories (via `loadFromGit`)
+- GitHub Issues (via `loadFromGitHubIssues`)
 
 ---
 
-## Data Sources
+## What we don't do
 
-### Directory Ingestion
-
-```typescript
-await blink.ingestDirectory('./docs', {
-  summarize: extractiveSummarize(500),
-  namespacePrefix: 'docs',
-  maxFileSize: 1048576,    // 1MB limit (default)
-  includeHidden: false,     // skip dotfiles (default)
-  onProgress: ({ current, total, file }) => {
-    console.log(`${current}/${total}: ${file}`);
-  }
-});
-```
-
-Supports 50+ file extensions out of the box. Skips empty files, hidden files, and files over the size limit automatically.
-
-### PostgreSQL Ingestion
-
-```typescript
-await blink.ingestFromPostgres({
-  connectionString: 'postgresql://localhost/mydb',
-  query: 'SELECT id, title, body FROM articles',
-  textColumn: 'body',
-  idColumn: 'id',
-  titleColumn: 'title'
-});
-```
-
-### Web Ingestion
-
-```typescript
-import { loadFromWeb } from 'blink-query';
-
-const docs = await loadFromWeb([
-  'https://example.com/docs/getting-started',
-  'https://example.com/docs/api-reference'
-]);
-await blink.ingest(docs, { namespacePrefix: 'web' });
-```
-
-### Git Ingestion
-
-```typescript
-import { loadFromGit } from 'blink-query';
-
-const docs = await loadFromGit({
-  repoPath: '/path/to/repo',
-  ref: 'main',
-  extensions: ['.md', '.ts']
-});
-await blink.ingest(docs, { namespacePrefix: 'repo' });
-```
-
-### LLM-Powered Summarization
-
-```typescript
-import { Blink, configureLLM } from 'blink-query';
-
-// Configure via environment variables:
-// BLINK_LLM_PROVIDER=openai
-// BLINK_LLM_MODEL=gpt-4o-mini
-// OPENAI_API_KEY=...
-
-const summarize = configureLLM();
-
-await blink.ingestDirectory('./docs', {
-  summarize,
-  namespacePrefix: 'knowledge'
-});
-```
-
-Or bring your own summarizer:
-
-```typescript
-await blink.ingest(docs, {
-  summarize: async (text, metadata) => {
-    // Call any LLM, return a string
-    return await myLLM.summarize(text);
-  }
-});
-```
-
----
-
-## Query DSL
-
-SQL-like query language for filtering records:
-
-```
-namespace where field op value [and|or condition] [order by field asc|desc] [limit N] [offset N] [since "date"]
-```
-
-### Examples
-
-```bash
-# Filter by type
-blink query 'docs where type = "SUMMARY"'
-
-# Tag search
-blink query 'projects where tags contains "urgent" order by hit_count desc'
-
-# Boolean logic
-blink query 'docs where type = "SOURCE" and hit_count > 10'
-
-# NOT operator
-blink query 'docs where not type = "ALIAS"'
-
-# IN operator
-blink query 'docs where type in ("SUMMARY", "META")'
-
-# Pagination
-blink query 'docs where type = "SUMMARY" limit 10 offset 20'
-
-# Date filtering
-blink query 'docs since "2026-01-01"'
-```
-
----
-
-## Resolution
-
-```typescript
-const response = blink.resolve('projects/orpheus/readme');
-
-switch (response.status) {
-  case 'OK':        // Record found
-  case 'STALE':     // Record found but TTL expired
-  case 'NXDOMAIN':  // Not found
-  case 'ALIAS_LOOP': // Circular alias detected
-}
-```
-
-Resolution follows DNS semantics:
-- Direct path lookup
-- ALIAS chains (up to 5 hops)
-- Auto-COLLECTION: resolving a namespace generates a listing of child records
-- TTL expiry: records past their TTL return with STALE status
-
----
-
-## API Design
-
-All CRUD operations are **synchronous** — no `await` needed:
-
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `resolve(path)` | `{ status, record }` | DNS-like path resolution |
-| `get(path)` | `record \| null` | Direct lookup |
-| `save(input)` | `record` | Create or update |
-| `delete(path)` | `boolean` | Remove a record |
-| `move(from, to)` | `record \| null` | Move/rename |
-| `search(query)` | `record[]` | FTS5 keyword search |
-| `list(namespace)` | `record[]` | List records in namespace |
-| `query(dsl)` | `record[]` | Query DSL filtering |
-
-Only ingestion methods (`ingest`, `ingestDirectory`, `ingestFromPostgres`) are async.
-
-### Error Handling
-
-- `resolve()` returns a status object — check `status` before using `record`
-- `get()` returns `null` if the path doesn't exist
-- `delete()` returns `false` if the record wasn't found
-- `move()` returns `null` if the source doesn't exist
-- `query()` throws on invalid query syntax
-- `save()` throws on invalid input (e.g., ALIAS without target)
-
----
-
-## Input Validation
-
-All input is validated at the save boundary:
-
-- Namespaces: no path traversal (`..`), no special characters (`#`, `?`, `%`)
-- Titles: non-empty, trimmed
-- Content: max 10MB
-- Tags: deduplicated, cleaned
-- Record types: must be one of the 5 valid types
-- PostgreSQL WHERE clauses: checked for injection patterns
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Blink System                           │
-├─────────────┬───────────────┬──────────────┬───────────────┤
-│  Ingestion  │    Storage    │  Resolution  │  Consumption  │
-│             │               │              │               │
-│ Directory   │  SQLite DB    │  Resolver    │   Library     │
-│ PostgreSQL  │  FTS5 Search  │  Query DSL   │   CLI         │
-│ Web / Git   │  Transactions │  Auto-COLL   │   MCP Server  │
-│ LLM Summary│  Zones        │  ALIAS chain │   JSON output │
-└─────────────┴───────────────┴──────────────┴───────────────┘
-```
-
-See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for a full plain-language guide.
+- **Vector embeddings.** blink-query uses BM25/FTS5, not dense retrieval. If you need semantic similarity search, layer a RAG system on top. The benchmark in `examples/llm-wiki/` shows where each approach wins.
+- **Sync or replication.** Single SQLite file, local. If you need multi-machine access, sync the markdown source with git and re-ingest.
+- **Hosted storage.** No cloud, no accounts. Your data lives in a `.db` file you own.
+- **Agent orchestration.** blink-query resolves knowledge. It doesn't plan tasks or coordinate agents.
+- **Magic.** It's SQLite with a query layer on top of your markdown files. You can open the database directly with any SQLite client if something seems wrong.
 
 ---
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Build (parser + library + CLI)
-npm run build
-
-# Run tests (excludes integration tests)
-npm test
-
-# Run all tests (including PostgreSQL integration)
-npm run test:all
-
-# Build PEG parser only
-npm run build:parser
-
-# Pack for inspection before publishing
-npm pack --dry-run
-
-# CLI (dev mode)
-node dist/index.js --help
+npm run build       # builds parser + library + CLI
+npm test            # 388+ tests
+npm run test:all    # includes PostgreSQL integration tests
 ```
 
 ---
 
-## Use Cases
+## Status
 
-- **Agent memory** — Store conversation context with semantic types
-- **Project knowledge base** — Ingest codebases, docs, wikis
-- **API caching** — Cache API responses with TTL
-- **Research notes** — Structure knowledge with namespaces
-- **Configuration** — Store settings as META records
+**v2.0.0** — active development. Published on npm as `blink-query`. MIT license.
 
----
+```bash
+npm install blink-query        # library
+npm install -g blink-query     # CLI + blink init
+```
 
-## License
-
-MIT — see [LICENSE](./LICENSE)
-
----
-
-**Questions?** [Open an issue](https://github.com/arpitnath/blink-query/issues) or read the [architecture docs](./docs/ARCHITECTURE.md).
+Issues and PRs welcome. The library is small enough that a single person can hold the whole thing in their head — the goal is to keep it that way.

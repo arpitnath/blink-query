@@ -1,0 +1,24 @@
+{
+  "name": "pathfinder",
+  "version": "0.1.0",
+  "description": "Knowledge resolution agent powered by blink-query and pi-ai",
+  "type": "module",
+  "scripts": {
+    "smoke": "node --import tsx/esm src/smoke.ts",
+    "agent": "node --import tsx/esm src/agent.ts",
+    "ingest": "node --import tsx/esm src/ingest.ts",
+    "benchmark": "node --import tsx/esm src/benchmark.ts",
+    "agent:blink": "node --import tsx/esm src/agent-blink.ts",
+    "agent:rag": "node --import tsx/esm src/agent-rag.ts"
+  },
+  "dependencies": {
+    "blink-query": "file:../..",
+    "@mariozechner/pi-ai": "^0.53.0",
+    "vectra": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  }
+}

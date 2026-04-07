@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { BlinkRecord, ResolveResponse } from './types.js';
-import { getByPath, list, incrementHit } from './store.js';
+import type { BlinkRecord, RecordType, ResolveResponse } from './types.js';
+import { getByPath, list, incrementHit, countByNamespace, findSuggestions } from './store.js';
 
 const MAX_ALIAS_HOPS = 5;
 
@@ -19,7 +19,9 @@ export function resolve(db: Database, path: string, depth = 0): ResolveResponse 
     // Try as namespace (maybe user omitted trailing slash)
     const asCollection = resolveCollection(db, path + '/');
     if (asCollection.status === 'OK') return asCollection;
-    return { status: 'NXDOMAIN', record: null };
+    const parentNs = path.includes('/') ? path.split('/').slice(0, -1).join('/') : path;
+    const suggestions = findSuggestions(db, path, parentNs);
+    return { status: 'NXDOMAIN', record: null, suggestions: suggestions as Array<{ path: string; title: string; type: RecordType }> };
   }
 
   // Follow ALIAS chain
@@ -47,11 +49,13 @@ export function resolve(db: Database, path: string, depth = 0): ResolveResponse 
 
 function resolveCollection(db: Database, namespacePath: string): ResolveResponse {
   const ns = namespacePath.replace(/\/$/, '');
-  const children = list(db, ns, 'recent', 100);
+  const children = list(db, ns, 'hits', 20);
 
   if (children.length === 0) {
     return { status: 'NXDOMAIN', record: null };
   }
+
+  const totalCount = countByNamespace(db, ns);
 
   // Auto-generate a COLLECTION record
   const collectionRecord: BlinkRecord = {
@@ -60,13 +64,12 @@ function resolveCollection(db: Database, namespacePath: string): ResolveResponse
     namespace: ns,
     title: ns.split('/').pop() || ns,
     type: 'COLLECTION',
-    summary: `${children.length} records in ${ns}/`,
-    content: children.map(c => ({
-      path: c.path,
-      title: c.title,
-      type: c.type,
-      hit_count: c.hit_count,
-    })),
+    summary: `${totalCount} records in ${ns}/ (showing top 20 by usage)`,
+    content: {
+      items: children.map(c => ({ path: c.path, title: c.title, type: c.type, hit_count: c.hit_count })),
+      total: totalCount,
+      truncated: totalCount > 20,
+    },
     ttl: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

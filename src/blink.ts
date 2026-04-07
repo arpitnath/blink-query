@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3';
-import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug } from './store.js';
+import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug, evictStale } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
-import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS } from './ingest.js';
-import { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, introspectPostgresTable, pickTextColumn } from './adapters.js';
-import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig } from './types.js';
+import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS, GITHUB_DERIVERS } from './ingest.js';
+import { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, loadFromGitHubIssues, introspectPostgresTable, pickTextColumn } from './adapters.js';
+import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig, GitHubLoadConfig } from './types.js';
 
 export interface BlinkOptions {
   dbPath?: string;
@@ -181,6 +181,18 @@ export class Blink {
     return this.ingest(docs, options);
   }
 
+  /** Load GitHub issues and ingest as Blink records */
+  async ingestFromGitHub(config: GitHubLoadConfig, options?: IngestOptions): Promise<IngestResult> {
+    const docs = await loadFromGitHubIssues(config);
+    const effectiveOptions: IngestOptions = options || { ...GITHUB_DERIVERS, summarize: extractiveSummarize(500) };
+    return this.ingest(docs, effectiveOptions);
+  }
+
+  /** Evict records that have exceeded their TTL */
+  evict(): number {
+    return evictStale(this.db);
+  }
+
   /** Close the database connection */
   close(): void {
     this.db.close();
@@ -194,7 +206,7 @@ export type {
   DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
   PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo,
   PostgresBatchCallback,
-  WebLoadConfig, GitLoadConfig, LLMConfig,
+  WebLoadConfig, GitLoadConfig, GitHubLoadConfig, LLMConfig,
 } from './types.js';
 
 // Re-export ingestion helpers
@@ -210,10 +222,12 @@ export {
   webNamespace, webTitle, webTags, webSources,
   GIT_DERIVERS,
   gitNamespace, gitTitle, gitTags, gitSources,
+  GITHUB_DERIVERS,
+  githubNamespace, githubTitle, githubTags, githubSources,
 } from './ingest.js';
 
 // Re-export adapter functions
-export { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit } from './adapters.js';
+export { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, loadFromGitHubIssues } from './adapters.js';
 
 // Re-export adapter utilities
 export { stripHtml, parseUrl, introspectPostgresTable, pickTextColumn } from './adapters.js';

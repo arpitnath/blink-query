@@ -30,8 +30,8 @@ describe('resolver', () => {
     const result = resolve(db, 'me/');
     expect(result.status).toBe('OK');
     expect(result.record!.type).toBe('COLLECTION');
-    const items = result.record!.content as Array<{ title: string }>;
-    expect(items).toHaveLength(2);
+    const content = result.record!.content as { items: Array<{ title: string }> };
+    expect(content.items).toHaveLength(2);
   });
 
   it('resolves namespace without trailing slash as COLLECTION', () => {

@@ -77,6 +77,7 @@ export interface QueryCondition {
 export interface ResolveResponse {
   status: 'OK' | 'NXDOMAIN' | 'STALE' | 'ALIAS_LOOP';
   record: BlinkRecord | null;
+  suggestions?: Array<{ path: string; title: string; type: RecordType }>;
 }
 
 // Input for save operations
@@ -89,6 +90,8 @@ export interface SaveInput {
   tags?: string[];
   ttl?: number;
   sources?: Source[];
+  /** If true, skip the update when content hash is unchanged (idempotent saves) */
+  skipIfUnchanged?: boolean;
 }
 
 // ─── Ingestion types ────────────────────────────────────────
@@ -159,6 +162,8 @@ export interface IngestOptions {
   deriveTags?: DeriveTagsCallback;
   /** Optional: custom source reference builder callback */
   buildSources?: BuildSourcesCallback;
+  /** Optional: callback fired after each batch is saved, useful for progress reporting */
+  onBatchComplete?: (info: { processed: number; total: number; batchSize: number }) => void;
 }
 
 /** Result of an ingest operation */
@@ -276,6 +281,24 @@ export interface GitLoadConfig {
   exclude?: string[];
   /** Max file size in bytes to include (default: 100000 = 100KB) */
   maxFileSize?: number;
+}
+
+/** Configuration for loading documents from GitHub Issues */
+export interface GitHubLoadConfig {
+  /** GitHub repo in 'owner/repo' format, e.g. 'vercel/next.js' */
+  repo: string;
+  /** GitHub personal access token (defaults to GITHUB_TOKEN env var) */
+  token?: string;
+  /** Filter by issue state (default: 'all') */
+  state?: 'open' | 'closed' | 'all';
+  /** Filter by label names */
+  labels?: string[];
+  /** Results per page (default: 100, max 100 per GitHub API) */
+  perPage?: number;
+  /** Maximum pages to fetch (default: 10) */
+  maxPages?: number;
+  /** Progress callback fired after each page */
+  onPage?: (pageNumber: number, totalFetched: number) => void;
 }
 
 /** Configuration for LLM-powered summarization and classification. */

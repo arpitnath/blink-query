@@ -1,7 +1,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { extname, basename } from 'path';
-import type { IngestDocument, Source, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo, WebLoadConfig, GitLoadConfig } from './types.js';
+import type { IngestDocument, Source, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo, WebLoadConfig, GitLoadConfig, GitHubLoadConfig } from './types.js';
 import { validatePostgresWhere } from './validation.js';
 
 // ─── HTML text extraction helper ─────────────────────────────
@@ -518,6 +518,72 @@ export async function loadFromGit(config: GitLoadConfig): Promise<IngestDocument
       // Skip files that can't be read (binary, etc.)
       continue;
     }
+  }
+
+  return docs;
+}
+
+// ─── GitHub Issues adapter ────────────────────────────────────
+
+export async function loadFromGitHubIssues(config: GitHubLoadConfig): Promise<IngestDocument[]> {
+  const token = config.token || process.env.GITHUB_TOKEN;
+  const perPage = Math.min(config.perPage || 100, 100);
+  const maxPages = config.maxPages || 10;
+  const state = config.state || 'all';
+  const [owner, repo] = config.repo.split('/');
+
+  if (!owner || !repo) throw new Error('repo must be in "owner/repo" format');
+
+  const docs: IngestDocument[] = [];
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'blink-query',
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  for (let page = 1; page <= maxPages; page++) {
+    const url = new URL(`https://api.github.com/repos/${owner}/${repo}/issues`);
+    url.searchParams.set('state', state);
+    url.searchParams.set('per_page', String(perPage));
+    url.searchParams.set('page', String(page));
+    if (config.labels?.length) {
+      url.searchParams.set('labels', config.labels.join(','));
+    }
+
+    const response = await fetch(url.toString(), { headers });
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+    }
+
+    const issues = await response.json() as any[];
+    if (issues.length === 0) break;
+
+    for (const issue of issues) {
+      // Skip PRs (GitHub API returns PRs in the issues endpoint)
+      if (issue.pull_request) continue;
+      // Skip issues with no body
+      if (!issue.body || issue.body.trim().length === 0) continue;
+
+      docs.push({
+        id: String(issue.number),
+        text: issue.body,
+        metadata: {
+          repo: config.repo,
+          issue_number: issue.number,
+          title: issue.title,
+          state: issue.state,
+          labels: (issue.labels || []).map((l: any) => l.name),
+          created_at: issue.created_at,
+          updated_at: issue.updated_at,
+          html_url: issue.html_url,
+          user: issue.user?.login,
+          is_pull_request: false,
+        },
+      });
+    }
+
+    if (config.onPage) config.onPage(page, docs.length);
+    if (issues.length < perPage) break; // Last page
   }
 
   return docs;

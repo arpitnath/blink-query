@@ -71,9 +71,9 @@ npm run benchmark
 | Obsidian Help | 171 | 15.9 ms | 11.9 ms | **0.56 ms** | 28× | 21× |
 | MDN content | 14,251 | 891 ms | 249 ms | **9.83 ms** | **91×** | **25×** |
 
-**blink-query is 25×–91× faster than grep across 3 corpora, 21×–31× faster than ripgrep.** Speed gap widens with corpus size — blink scales sub-linearly, grep scales linearly.
+**blink-query is 25x–91x faster than grep across 3 corpora, 21x–31x faster than ripgrep.** Speed gap widens with corpus size — blink scales sub-linearly, grep scales linearly.
 
-On the 14k-file MDN corpus, **grep returns an average of 1,212 unranked files per query** (because common terms like "Promise" appear in 1,314 files, "DOM" in 9,363). blink returns top-5 ranked. The agent reads ~242× fewer files to find the answer.
+On the 14k-file MDN corpus, **grep returns an average of 1,212 unranked files per query** (because common terms like "Promise" appear in 1,314 files, "DOM" in 9,363). blink returns top-5 ranked. The agent reads ~242x fewer files to find the answer.
 
 Accuracy across the 3 corpora: **P@3 = 79% average (88% on Obsidian, 79% on Quartz, 72% on MDN)**. Verifiable regex oracles for every query in [`benchmark/bench.ts`](benchmark/bench.ts). Methodology, caveats, and reference numbers in [`benchmark/README.md`](benchmark/README.md).
 

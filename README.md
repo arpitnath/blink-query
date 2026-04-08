@@ -2,17 +2,27 @@
 
 **A typed wiki for LLMs — markdown on disk, resolution in the library.**
 
-<!-- HERO GIF: 30-second screencast of `npm run benchmark` showing the colored cross-corpus output, ASCII speedup bars, and the headline line. Save as docs/assets/benchmark.gif and uncomment below.
-![blink-query benchmark running](docs/assets/benchmark.gif)
--->
+[![npm version](https://img.shields.io/npm/v/blink-query.svg)](https://www.npmjs.com/package/blink-query)
+[![license](https://img.shields.io/npm/l/blink-query.svg)](LICENSE)
+[![tests](https://img.shields.io/badge/tests-524%20passing-brightgreen.svg)](#development)
 
-The LLM wiki pattern ([original gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)) is simple: keep a folder of markdown files, let the agent read and grep them, build up institutional memory over time. I ran it for a while and kept wanting three things:
+![blink-query benchmark running](docs/assets/blink.gif)
 
-1. A way to say what each file *is* (canonical summary, log entry, source reference, alias).
-2. A deterministic lookup path that didn't require guessing filenames.
-3. A query interface the agent could call without spawning a shell.
+blink-query is a knowledge resolution library for LLM agents. Markdown files stay on disk where you can read and edit them; the library adds typed records, title-weighted BM25 search, deterministic path resolution, and an MCP server — all in a SQLite file next to your notes. No cloud, no embeddings, no daemon.
 
-So I built them as a library on top of the same markdown files. Markdown stays markdown — typed records, FTS5 search, path resolution, and an MCP server live in SQLite next to it.
+
+
+## Features
+
+- **5 typed record types** — `SUMMARY`, `META`, `SOURCE`, `ALIAS`, `COLLECTION` — each carries a consumption instruction for the agent (read the summary / parse JSON / fetch the source / follow the redirect / browse children)
+- **Title-weighted BM25 over FTS5** — title matches ranked 10× over body summary, with per-type rank offsets that promote canonical pages
+- **Hub-vs-leaf default classifier** — automatically promotes `index` / `README` / `Home` files in hub directories to `SUMMARY`, no per-corpus tuning
+- **Path resolution** — deterministic O(1) lookup by namespace/slug, with `NXDOMAIN` / `STALE` / `ALIAS_LOOP` statuses
+- **MCP server with 11 tools** — drop-in for Claude Desktop, Claude Code, Cursor, Codex
+- **Query DSL** — Peggy-parsed: `wiki where type = "SUMMARY" and tags contains "auth" limit 10`
+- **Multi-source ingestion** — markdown directories, PostgreSQL rows, GitHub Issues, git repos, web URLs
+- **Zones** — top-level namespaces with default TTL and required-tag policies
+- **[[wikilink]] extraction** — auto-creates `ALIAS` records on ingest
 
 ---
 
@@ -66,9 +76,7 @@ On the 14k-file MDN corpus, **grep returns an average of 1,212 unranked files pe
 
 Accuracy across the 3 corpora: **P@3 = 79% average (88% on Obsidian, 79% on Quartz, 72% on MDN)**. Verifiable regex oracles for every query in [`benchmark/bench.ts`](benchmark/bench.ts). Methodology, caveats, and reference numbers in [`benchmark/README.md`](benchmark/README.md).
 
-<!-- IMAGE: terminal screenshot of the cross-corpus summary table from `npm run benchmark` showing the latency table, ASCII speedup bars, and headline. Save as docs/assets/benchmark-summary.png and uncomment below.
-![blink-query cross-corpus summary](docs/assets/benchmark-summary.png)
--->
+![blink-query cross-corpus summary](docs/assets/blink_bench.png)
 
 The bench script auto-clones the corpora into `benchmark/corpora/` (gitignored, ~270 MB on first run), runs blink + grep + ripgrep on the same file set with the same query set, and prints a unified comparison. No `--mode` flag. No per-corpus tuning. No presets.
 

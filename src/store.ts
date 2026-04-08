@@ -97,7 +97,9 @@ function now(): string {
 }
 
 function shortId(): string {
-  return randomUUID().replace(/-/g, '').slice(0, 8);
+  // 16 hex chars = 64 bits. Birthday-collision threshold ~4 billion records.
+  // The previous 8-char (32-bit) id collided in practice on corpora >10k records.
+  return randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
 
@@ -266,8 +268,26 @@ export function searchByKeywords(db: Database, keywords: string[], namespace?: s
   // Build FTS5 MATCH query: "word1 OR word2 OR word3"
   const matchExpr = kws.map(k => `"${k.replace(/"/g, '""')}"`).join(' OR ');
 
+  // Universal title-weighted BM25 with type-aware boost.
+  //
+  // Per-column weights: title 10.0, tags 4.0, summary 1.0. The FTS5 records_fts
+  // virtual table indexes (title, tags, summary) — record_path is UNINDEXED so
+  // it's skipped. A title match contributes ~10x what a body summary match does.
+  // This is the universal pattern across Pagefind (5x), Quartz, Meilisearch,
+  // and the BM25F literature (3-10x is the empirical sweet spot). It's the
+  // single highest-leverage corpus-agnostic ranking change.
+  //
+  // Type-aware offset: SUMMARY records (canonical "what is X" pages) get the
+  // largest boost. SQLite's bm25() returns NEGATIVE values where lower = better,
+  // so we ADD a negative offset per type to push canonical records up the rank.
   let sql = `
-    SELECT r.*, bm25(records_fts) as rank
+    SELECT r.*,
+      bm25(records_fts, 10.0, 4.0, 1.0) + CASE r.type
+        WHEN 'SUMMARY' THEN -2.0
+        WHEN 'META' THEN -1.0
+        WHEN 'COLLECTION' THEN -0.5
+        ELSE 0.0
+      END AS rank
     FROM records_fts fts
     JOIN records r ON r.path = fts.record_path
     WHERE records_fts MATCH ?

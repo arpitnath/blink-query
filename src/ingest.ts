@@ -30,7 +30,33 @@ export function filesystemTitle(
 ): string {
   const fileName = (metadata.file_name as string) || 'untitled';
   const ext = extname(fileName);
-  return ext ? fileName.slice(0, -ext.length) : fileName;
+  const stem = ext ? fileName.slice(0, -ext.length) : fileName;
+
+  // For "index"-style files (index.md, README.md, Home.md, About.md), the
+  // parent directory name carries the semantics — e.g. on MDN, every page is
+  // `<topic>/index.md` and the topic name lives in the parent dir. Without
+  // this fallback, every record gets title="index" and BM25 can't rank.
+  if (/^(index|readme|home|about)$/i.test(stem)) {
+    const filePath = (metadata.file_path as string) || '';
+    const parentDir = filePath.split('/').slice(-2, -1)[0];
+    if (parentDir) {
+      return parentDir.replace(/[_-]/g, ' ');
+    }
+  }
+
+  // For non-semantic filenames (Logseq date journals like `2024-04-08.md`,
+  // Notion UUID exports like `a1b2c3d4-e5f6-...md`), the filename itself is
+  // useless for retrieval. Fall back to the H1 extracted from the body
+  // (loadDirectoryBasic stashes this in metadata.h1). The gate is intentionally
+  // narrow — semantic filenames like `authentication.md` are not overridden.
+  const isDateLike = /^\d{4}[-_]\d{2}[-_]\d{2}/.test(stem);
+  const isUuidLike = /^[0-9a-f]{8}([-_]?[0-9a-f]{4}){3}[-_]?[0-9a-f]{12}/i.test(stem);
+  if (isDateLike || isUuidLike) {
+    const h1 = metadata.h1 as string | undefined;
+    if (h1) return h1;
+  }
+
+  return stem;
 }
 
 export function filesystemTags(
@@ -76,6 +102,43 @@ export const FILESYSTEM_DERIVERS = {
   deriveTags: filesystemTags,
   buildSources: filesystemSources,
 } as const;
+
+/**
+ * Default classifier used by `processDocuments` when no `classify` callback is provided.
+ *
+ * Strategy: structural signals from the directory walk drive the type.
+ * - `is_canonical` (file is index/readme/home/about of its dir) AND `is_hub`
+ *   (parent dir contains other subdirectories) → `SUMMARY`. These are canonical
+ *   entry points for sub-topics on docs sites (MDN-shape).
+ * - Frontmatter `type:` field, if present, takes precedence over structural signals.
+ * - Everything else → `SOURCE`.
+ *
+ * This works without per-corpus tuning because the signals are universal:
+ * any markdown corpus organized as a directory tree exposes hub-vs-leaf structure.
+ * Corpora with explicit frontmatter `type:` (Obsidian-style wikis with the
+ * WIKI_DERIVERS preset) override this with their own classifier.
+ */
+export function defaultClassify(
+  _text: string,
+  metadata: Record<string, unknown>,
+): RecordType {
+  // Frontmatter explicit type wins (lets users author intent into files)
+  const fm = metadata.frontmatter as Record<string, unknown> | undefined;
+  if (fm && typeof fm.type === 'string') {
+    const t = fm.type.toUpperCase();
+    if (t === 'SUMMARY' || t === 'META' || t === 'COLLECTION' || t === 'SOURCE' || t === 'ALIAS') {
+      return t as RecordType;
+    }
+  }
+
+  // Hub-vs-leaf structural signal: a canonical (index/readme/home/about) file
+  // in a directory that contains other subdirectories is a SUMMARY (entry point).
+  if (metadata.is_hub === true) {
+    return 'SUMMARY';
+  }
+
+  return 'SOURCE';
+}
 
 // ─── Postgres derivers (for PostgreSQL row data) ────────────
 
@@ -552,7 +615,7 @@ export async function documentToSaveInput(
   const summary = await summarize(doc.text, doc.metadata);
   const type: RecordType = options.classify
     ? await options.classify(doc.text, doc.metadata)
-    : 'SOURCE';
+    : defaultClassify(doc.text, doc.metadata);
 
   const namespace = resolveNamespace(doc.metadata, options);
   const titleDeriver = options.deriveTitle || filesystemTitle;
@@ -906,7 +969,7 @@ async function loadDirectoryBasic(
   options?: LoadDirectoryOptions,
 ): Promise<IngestDocument[]> {
   const { readdir, readFile, stat } = await import('fs/promises');
-  const { join, relative, extname: ext } = await import('path');
+  const { join, relative, dirname, extname: ext, basename } = await import('path');
   const { randomUUID } = await import('crypto');
 
   const allowedExts = options?.extensions
@@ -915,6 +978,35 @@ async function loadDirectoryBasic(
 
   const docs: IngestDocument[] = [];
   const basePath = dirPath;
+
+  // Pre-walk pass: collect which directories contain (non-excluded) subdirectories.
+  // This enables hub-vs-leaf detection in the metadata pass below — a "hub" directory
+  // is one with subdirectories, meaning its `index.md` / `README.md` is a canonical
+  // entry point for sub-topics rather than a leaf detail page.
+  const hubDirs = new Set<string>();
+  async function detectHubs(dir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const hasSubdirs = entries.some(
+      e =>
+        e.isDirectory() &&
+        !e.name.startsWith('.') &&
+        !DEFAULT_IGNORE_DIRS.has(e.name),
+    );
+    if (hasSubdirs) hubDirs.add(dir);
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') && !options?.includeHidden) continue;
+      if (entry.isDirectory() && DEFAULT_IGNORE_DIRS.has(entry.name)) continue;
+      if (entry.isDirectory() && options?.recursive !== false) {
+        await detectHubs(join(dir, entry.name));
+      }
+    }
+  }
+  await detectHubs(dirPath);
 
   async function walk(dir: string) {
     const entries = await readdir(dir, { withFileTypes: true });
@@ -944,12 +1036,25 @@ async function loadDirectoryBasic(
           // Parse YAML frontmatter for markdown files so wiki derivers can
           // see title/source_url/type/tags without each caller re-parsing.
           const isMarkdown = ext(entry.name).toLowerCase() === '.md' || ext(entry.name).toLowerCase() === '.markdown';
+
+          // Hub-vs-leaf + canonical detection:
+          //   is_canonical = file is the index/readme/home/about of its directory
+          //   is_hub       = file is canonical AND parent dir contains other subdirs
+          // Together these let the default classifier distinguish "canonical entry
+          // point for a topic" from "leaf detail page" without corpus-specific tuning.
+          const stem = basename(entry.name, ext(entry.name));
+          const isCanonicalName = /^(index|readme|home|about)$/i.test(stem);
+          const parentDir = dirname(fullPath);
+          const parentIsHub = hubDirs.has(parentDir);
+
           const metadata: Record<string, unknown> = {
             file_path: relPath,
             file_name: entry.name,
             file_type: ext(entry.name),
             file_size: stats.size,
             loader: 'basic',
+            is_canonical: isCanonicalName,
+            is_hub: isCanonicalName && parentIsHub,
           };
           let text = content;
           if (isMarkdown) {
@@ -958,6 +1063,10 @@ async function loadDirectoryBasic(
               metadata.frontmatter = parsed.frontmatter;
               text = parsed.body;
             }
+            // Extract first H1 for non-semantic filename fallback (Logseq dates,
+            // Notion UUIDs, etc.). Stored in metadata so deriveTitle can use it.
+            const h1Match = text.match(/^#[ \t]+(.+?)[ \t]*$/m);
+            if (h1Match) metadata.h1 = h1Match[1].trim();
           }
 
           docs.push({

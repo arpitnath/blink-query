@@ -183,7 +183,9 @@ describe('blink.ingest()', () => {
       { summarize: () => 'A readme file' },
     );
 
-    const record = blink.get('docs/readme');
+    // README.md uses parent directory as title (so the record path is "docs/docs",
+    // not "docs/readme") — see filesystemTitle's index/readme/home/about handling.
+    const record = blink.get('docs/docs');
     expect(record).not.toBeNull();
     expect(record!.type).toBe('SOURCE');
     expect(record!.summary).toBe('A readme file');

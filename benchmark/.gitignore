@@ -1,0 +1,9 @@
+# Cloned upstream corpora — pulled fresh by `npm run benchmark` setup step.
+# Not redistributed; we cite upstream URLs and commit SHAs in results.json.
+corpora/
+
+# Per-corpus runtime artifacts
+.tmp/
+
+# Aggregated machine-readable results — regenerated on each run, not committed
+results.json

@@ -34,7 +34,7 @@ describe('store', () => {
       expect(record.type).toBe('SUMMARY');
       expect(record.summary).toBe('Arpit, 28, engineer');
       expect(record.tags).toEqual(['personal']);
-      expect(record.id).toHaveLength(8);
+      expect(record.id).toHaveLength(16);
       expect(record.content_hash).toBeTruthy();
       expect(record.token_count).toBeGreaterThan(0);
     });

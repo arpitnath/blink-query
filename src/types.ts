@@ -45,9 +45,22 @@ export interface Zone {
   path: string;
   description: string | null;
   default_ttl: number;
+  required_tags: string[] | null;
   record_count: number;
   created_at: string;
   last_modified: string;
+}
+
+/** Config accepted by Blink.createZone() — everything except path is optional. */
+export interface ZoneConfig {
+  /** Top-level namespace path, e.g. "adr", "decisions", "people". */
+  namespace: string;
+  /** Human-readable description of what lives in this zone. */
+  description?: string;
+  /** Default TTL (seconds) applied to records saved into this zone when no TTL is specified. */
+  defaultTtl?: number;
+  /** Tag names that every record in this zone must include. Save throws if missing. */
+  requiredTags?: string[];
 }
 
 // Query AST (output of Peggy parser)
@@ -164,6 +177,12 @@ export interface IngestOptions {
   buildSources?: BuildSourcesCallback;
   /** Optional: callback fired after each batch is saved, useful for progress reporting */
   onBatchComplete?: (info: { processed: number; total: number; batchSize: number }) => void;
+  /**
+   * Optional: scan saved records' summaries for `[[wikilinks]]` and create
+   * ALIAS records for each resolved target. Defaults to false. Recommended
+   * for the WIKI_DERIVERS preset.
+   */
+  extractLinks?: boolean;
 }
 
 /** Result of an ingest operation */
@@ -172,6 +191,10 @@ export interface IngestResult {
   errors: Array<{ document: IngestDocument; error: Error }>;
   total: number;
   elapsed: number;
+  /** When extractLinks is set, the number of ALIAS records created from `[[wikilinks]]`. */
+  aliasesCreated?: number;
+  /** When extractLinks is set, target slugs that did not resolve to any record. */
+  unresolvedLinks?: string[];
 }
 
 // ─── Adapter config types ────────────────────────────────────

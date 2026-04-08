@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3';
-import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, slug, evictStale } from './store.js';
+import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, createZone, getZone, slug, evictStale } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
-import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS, GITHUB_DERIVERS } from './ingest.js';
+import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS, GITHUB_DERIVERS, extractWikiLinks } from './ingest.js';
 import { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, loadFromGitHubIssues, introspectPostgresTable, pickTextColumn } from './adapters.js';
-import type { BlinkRecord, SaveInput, Zone, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig, GitHubLoadConfig } from './types.js';
+import type { BlinkRecord, SaveInput, Zone, ZoneConfig, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig, GitHubLoadConfig } from './types.js';
 
 export interface BlinkOptions {
   dbPath?: string;
@@ -53,6 +53,20 @@ export class Blink {
     return executeQuery(this.db, queryString);
   }
 
+  /**
+   * Create (or update) a zone's metadata. Registered zones can declare a
+   * description, a default TTL applied to records saved without an explicit
+   * TTL, and a list of tags every record in the zone must include.
+   */
+  createZone(config: ZoneConfig): Zone {
+    return createZone(this.db, config);
+  }
+
+  /** Get a zone's metadata by namespace (returns null if not registered or no records saved yet). */
+  getZone(namespace: string): Zone | null {
+    return getZone(this.db, namespace);
+  }
+
   /** List all zones */
   zones(): Zone[] {
     return listZones(this.db);
@@ -75,7 +89,13 @@ export class Blink {
 
   /** Ingest documents (from LlamaIndex or any loader) into Blink records */
   async ingest(docs: IngestDocument[], options: IngestOptions): Promise<IngestResult> {
-    return processDocuments(this, docs, options);
+    const result = await processDocuments(this, docs, options);
+    if (options.extractLinks) {
+      const links = extractWikiLinks(this, result.records);
+      result.aliasesCreated = links.aliasesCreated;
+      result.unresolvedLinks = links.unresolvedLinks;
+    }
+    return result;
   }
 
   /** Load and ingest a directory in one call. Uses LlamaIndex if installed, else basic fs loader. */
@@ -201,7 +221,7 @@ export class Blink {
 
 // Re-export types for consumers
 export type {
-  BlinkRecord, SaveInput, Zone, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
+  BlinkRecord, SaveInput, Zone, ZoneConfig, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
   IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback,
   DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
   PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo,
@@ -210,7 +230,8 @@ export type {
 } from './types.js';
 
 // Re-export ingestion helpers
-export { loadDirectory, extractiveSummarize } from './ingest.js';
+export { loadDirectory, extractiveSummarize, extractWikiLinks } from './ingest.js';
+export type { ExtractWikiLinksResult, WikiLinkExtractorBlink } from './ingest.js';
 
 // Re-export preset derivers
 export {
@@ -224,6 +245,9 @@ export {
   gitNamespace, gitTitle, gitTags, gitSources,
   GITHUB_DERIVERS,
   githubNamespace, githubTitle, githubTags, githubSources,
+  WIKI_DERIVERS,
+  wikiClassify, wikiNamespace, wikiTitle, wikiTags, wikiSources,
+  createWikiNamespace,
 } from './ingest.js';
 
 // Re-export adapter functions

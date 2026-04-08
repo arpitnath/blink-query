@@ -1,0 +1,20 @@
+{
+  "name": "llm-wiki-example",
+  "version": "2.0.0",
+  "private": true,
+  "description": "End-to-end LLM wiki example powered by blink-query",
+  "type": "module",
+  "scripts": {
+    "ingest": "node --import tsx/esm ingest.ts",
+    "query": "node --import tsx/esm query.ts",
+    "benchmark": "node --import tsx/esm benchmark/harness.ts",
+    "bench:grep": "node --import tsx/esm benchmark/grep-baseline.ts",
+    "bench:blink": "node --import tsx/esm benchmark/blink-baseline.ts"
+  },
+  "dependencies": {
+    "blink-query": "file:../.."
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

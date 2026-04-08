@@ -3,8 +3,19 @@ import { createHash, randomUUID } from 'crypto';
 import { mkdirSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
-import type { BlinkRecord, SaveInput, Zone } from './types.js';
+import type { BlinkRecord, SaveInput, Zone, ZoneConfig } from './types.js';
 import { validateSaveInput } from './validation.js';
+
+/** Raw row shape of a zones table entry as returned by SQLite. */
+interface RawZone {
+  path: string;
+  description: string | null;
+  default_ttl: number;
+  required_tags: string | null;
+  record_count: number;
+  created_at: string;
+  last_modified: string;
+}
 
 const DEFAULT_TTL = 2592000; // 30 days
 
@@ -40,6 +51,7 @@ CREATE TABLE IF NOT EXISTS zones (
     path          TEXT PRIMARY KEY,
     description   TEXT,
     default_ttl   INTEGER DEFAULT ${DEFAULT_TTL},
+    required_tags TEXT,
     record_count  INTEGER DEFAULT 0,
     created_at    TEXT NOT NULL,
     last_modified TEXT NOT NULL
@@ -85,7 +97,9 @@ function now(): string {
 }
 
 function shortId(): string {
-  return randomUUID().replace(/-/g, '').slice(0, 8);
+  // 16 hex chars = 64 bits. Birthday-collision threshold ~4 billion records.
+  // The previous 8-char (32-bit) id collided in practice on corpora >10k records.
+  return randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
 
@@ -119,7 +133,18 @@ export function initDB(dbPath?: string): Database {
   db.pragma('mmap_size = 268435456');
   db.pragma('temp_store = MEMORY');
   migrateFTS(db);
+  migrateZonesRequiredTags(db);
   return db;
+}
+
+/**
+ * Migration: add `required_tags` column to zones table for databases
+ * created before v2.0.0. Idempotent — no-op if the column already exists.
+ */
+export function migrateZonesRequiredTags(db: Database): void {
+  const cols = db.prepare(`PRAGMA table_info(zones)`).all() as Array<{ name: string }>;
+  if (cols.some(c => c.name === 'required_tags')) return;
+  db.exec(`ALTER TABLE zones ADD COLUMN required_tags TEXT`);
 }
 
 export function migrateFTS(db: Database): void {
@@ -168,9 +193,57 @@ function incrementZoneCount(db: Database, namespace: string, delta: number): voi
   ).run(delta, now(), zonePath);
 }
 
+function deserializeZone(row: RawZone): Zone {
+  return {
+    path: row.path,
+    description: row.description,
+    default_ttl: row.default_ttl,
+    required_tags: row.required_tags ? JSON.parse(row.required_tags) as string[] : null,
+    record_count: row.record_count,
+    created_at: row.created_at,
+    last_modified: row.last_modified,
+  };
+}
+
 export function listZones(db: Database): Zone[] {
-  const rows = db.prepare('SELECT * FROM zones ORDER BY path').all() as Zone[];
-  return rows;
+  const rows = db.prepare('SELECT * FROM zones ORDER BY path').all() as RawZone[];
+  return rows.map(deserializeZone);
+}
+
+export function getZone(db: Database, namespace: string): Zone | null {
+  const zonePath = getZonePath(namespace);
+  const row = db.prepare('SELECT * FROM zones WHERE path = ?').get(zonePath) as RawZone | null;
+  return row ? deserializeZone(row) : null;
+}
+
+/**
+ * Create or update a zone's metadata. Unlike ensureZone (which is called
+ * implicitly on save), this lets devs and agents declare zones up-front with
+ * a description, default TTL, and required tags that every record in the
+ * zone must carry.
+ */
+export function createZone(db: Database, config: ZoneConfig): Zone {
+  const zonePath = getZonePath(config.namespace);
+  const timestamp = now();
+  const existing = db.prepare('SELECT * FROM zones WHERE path = ?').get(zonePath) as RawZone | null;
+
+  const description = config.description ?? existing?.description ?? null;
+  const defaultTtl = config.defaultTtl ?? existing?.default_ttl ?? DEFAULT_TTL;
+  const requiredTags = config.requiredTags !== undefined
+    ? JSON.stringify(config.requiredTags)
+    : existing?.required_tags ?? null;
+
+  if (existing) {
+    db.prepare(
+      'UPDATE zones SET description = ?, default_ttl = ?, required_tags = ?, last_modified = ? WHERE path = ?'
+    ).run(description, defaultTtl, requiredTags, timestamp, zonePath);
+  } else {
+    db.prepare(
+      'INSERT INTO zones (path, description, default_ttl, required_tags, record_count, created_at, last_modified) VALUES (?, ?, ?, ?, 0, ?, ?)'
+    ).run(zonePath, description, defaultTtl, requiredTags, timestamp, timestamp);
+  }
+
+  return getZone(db, config.namespace)!;
 }
 
 // --- FTS5 operations ---
@@ -195,8 +268,26 @@ export function searchByKeywords(db: Database, keywords: string[], namespace?: s
   // Build FTS5 MATCH query: "word1 OR word2 OR word3"
   const matchExpr = kws.map(k => `"${k.replace(/"/g, '""')}"`).join(' OR ');
 
+  // Universal title-weighted BM25 with type-aware boost.
+  //
+  // Per-column weights: title 10.0, tags 4.0, summary 1.0. The FTS5 records_fts
+  // virtual table indexes (title, tags, summary) — record_path is UNINDEXED so
+  // it's skipped. A title match contributes ~10x what a body summary match does.
+  // This is the universal pattern across Pagefind (5x), Quartz, Meilisearch,
+  // and the BM25F literature (3-10x is the empirical sweet spot). It's the
+  // single highest-leverage corpus-agnostic ranking change.
+  //
+  // Type-aware offset: SUMMARY records (canonical "what is X" pages) get the
+  // largest boost. SQLite's bm25() returns NEGATIVE values where lower = better,
+  // so we ADD a negative offset per type to push canonical records up the rank.
   let sql = `
-    SELECT r.*, bm25(records_fts) as rank
+    SELECT r.*,
+      bm25(records_fts, 10.0, 4.0, 1.0) + CASE r.type
+        WHEN 'SUMMARY' THEN -2.0
+        WHEN 'META' THEN -1.0
+        WHEN 'COLLECTION' THEN -0.5
+        ELSE 0.0
+      END AS rank
     FROM records_fts fts
     JOIN records r ON r.path = fts.record_path
     WHERE records_fts MATCH ?
@@ -279,8 +370,21 @@ function saveInner(db: Database, input: SaveInput): string {
   const hash = contentHash(summary || content || '');
   const tokens = summary ? tokenCount(summary) : 0;
   const timestamp = now();
-  const ttl = cleanedInput.ttl || DEFAULT_TTL;
   const sources = cleanedInput.sources ? JSON.stringify(cleanedInput.sources) : '[]';
+
+  // Zone metadata: apply defaultTtl and validate requiredTags.
+  // Registered zones (via createZone) get first dibs on policy.
+  const zone = getZone(db, cleanedInput.namespace);
+  if (zone?.required_tags && zone.required_tags.length > 0) {
+    const missing = zone.required_tags.filter(t => !tags.includes(t));
+    if (missing.length > 0) {
+      throw new Error(
+        `Zone "${getZonePath(cleanedInput.namespace)}" requires tags [${zone.required_tags.join(', ')}], ` +
+        `missing: [${missing.join(', ')}]`,
+      );
+    }
+  }
+  const ttl = cleanedInput.ttl || zone?.default_ttl || DEFAULT_TTL;
 
   // A2: Handle slug collisions — different titles producing the same slug
   let counter = 2;

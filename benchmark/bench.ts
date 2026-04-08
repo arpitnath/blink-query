@@ -27,13 +27,18 @@ import type { IngestOptions } from '../src/types.js';
 
 // ─── CLI args ───────────────────────────────────────────────
 
-const ROOT = resolve(process.argv[2] || '');
-const LABEL = process.argv[3] || 'corpus';
+// Filter out flags so positional args still resolve correctly
+const positional = process.argv.slice(2).filter(a => !a.startsWith('--'));
+const VERBOSE = process.argv.includes('--verbose');
+
+const ROOT = resolve(positional[0] || '');
+const LABEL = positional[1] || 'corpus';
 const CORPUS_KEY = LABEL.split('-')[0] as 'obsidian' | 'mdn' | 'quartz';
 
 if (!ROOT || !existsSync(ROOT)) {
-  console.error(`Usage: tsx benchmark/bench.ts <root-dir> <corpus-key>`);
+  console.error(`Usage: tsx benchmark/bench.ts <root-dir> <corpus-key> [--verbose]`);
   console.error(`  corpus-key must be one of: obsidian, mdn, quartz`);
+  console.error(`  --verbose: print query text and blink top-5 paths under each query`);
   console.error(`  ROOT not found: ${ROOT || '(empty)'}`);
   process.exit(1);
 }
@@ -373,20 +378,48 @@ async function main(): Promise<void> {
     const blinkP1 = blinkPaths[0] ? q.oracle.test(blinkPaths[0]) : false;
     const blinkP3 = blinkPaths.slice(0, 3).some(p => p && q.oracle.test(p));
 
+    // Make blink result paths relative to ROOT for readable output
+    const blinkRel = blinkPaths.map(p => p.replace(ROOT + '/', '').replace(ROOT, ''));
+
     queryResults.push({
       id: q.id, type: q.type, query: q.query, grepTerm: q.grepTerm,
       oracleSource: q.oracle.source,
       grep: { ms: grepMs, count: grepFiles.length, found: grepFound },
       ripgrep: { ms: rgMs, count: rgFiles.length, found: rgFound },
-      blink: { ms: blinkMs, count: blinkResults.length, p1: blinkP1, p3: blinkP3 },
+      blink: {
+        ms: blinkMs,
+        count: blinkResults.length,
+        p1: blinkP1,
+        p3: blinkP3,
+        top5: blinkRel,
+      },
     });
 
-    console.log(
-      `  ${dim(q.id.padEnd(13))} ` +
-      `${yellow('grep')} ${String(grepMs).padStart(4)}ms ${dim(`(${String(grepFiles.length).padStart(4)})`)} ${grepFound ? tick : cross}  ` +
-      `${dim('rg')} ${String(rgMs).padStart(4)}ms ${dim(`(${String(rgFiles.length).padStart(4)})`)} ${rgFound ? tick : cross}  ` +
-      `${cyan('blink')} ${String(blinkMs).padStart(4)}ms  P@1 ${blinkP1 ? tick : cross}  P@3 ${blinkP3 ? tick : cross}`,
-    );
+    if (VERBOSE) {
+      // Verbose: query text on its own line, then metrics, then blink top-5 with oracle annotation
+      console.log(`  ${dim(q.id.padEnd(13))} "${q.query}"`);
+      console.log(
+        `    ${yellow('grep')} ${String(grepMs).padStart(4)}ms ${dim(`(${String(grepFiles.length).padStart(4)} hits)`)} ${grepFound ? tick : cross}  ` +
+        `${dim('rg')} ${String(rgMs).padStart(4)}ms ${dim(`(${String(rgFiles.length).padStart(4)})`)} ${rgFound ? tick : cross}  ` +
+        `${cyan('blink')} ${String(blinkMs).padStart(4)}ms  P@1 ${blinkP1 ? tick : cross}  P@3 ${blinkP3 ? tick : cross}`,
+      );
+      console.log(`    ${dim('blink top-5:')}`);
+      blinkPaths.forEach((fullPath, i) => {
+        const relPath = blinkRel[i];
+        const isOracle = q.oracle.test(fullPath);
+        const oracleNote = isOracle ? `  ${ok('← oracle')}` : '';
+        console.log(`      ${dim(String(i + 1) + '.')} ${relPath}${oracleNote}`);
+      });
+      console.log();
+    } else {
+      // Compact: one line per query
+      console.log(
+        `  ${dim(q.id.padEnd(13))} ` +
+        `${yellow('grep')} ${String(grepMs).padStart(4)}ms ${dim(`(${String(grepFiles.length).padStart(4)})`)} ${grepFound ? tick : cross}  ` +
+        `${dim('rg')} ${String(rgMs).padStart(4)}ms ${dim(`(${String(rgFiles.length).padStart(4)})`)} ${rgFound ? tick : cross}  ` +
+        `${cyan('blink')} ${String(blinkMs).padStart(4)}ms  P@1 ${blinkP1 ? tick : cross}  P@3 ${blinkP3 ? tick : cross}`,
+      );
+    }
   }
 
   // ── Aggregate ──────────────────────────────────────────
@@ -453,9 +486,9 @@ async function main(): Promise<void> {
   console.log(`  ${cyan('blink  ')}   ${bold((blinkStats.mean + 'ms').padEnd(9))} ${(blinkStats.p50 + 'ms').padEnd(7)} ${(blinkStats.p95 + 'ms').padEnd(7)} ${blinkStats.max}ms`);
   console.log();
   console.log(`  ${bold('accuracy')}`);
-  console.log(`  ${yellow('grep   ')}   ${grepFoundCount}/${applicableQueries.length} found ${dim(`(${(grepFoundCount / applicableQueries.length * 100).toFixed(0)}%)`)}, avg ${grepAvgCount.toFixed(0)} files unranked`);
-  console.log(`  ${dim('ripgrep')}   ${rgFoundCount}/${applicableQueries.length} found ${dim(`(${(rgFoundCount / applicableQueries.length * 100).toFixed(0)}%)`)}, avg ${rgAvgCount.toFixed(0)} files unranked`);
-  console.log(`  ${cyan('blink  ')}   P@1 ${bold(`${blinkP1Count}/${applicableQueries.length}`)} ${dim(`(${(blinkP1Count / applicableQueries.length * 100).toFixed(0)}%)`)}, P@3 ${bold(`${blinkP3Count}/${applicableQueries.length}`)} ${dim(`(${(blinkP3Count / applicableQueries.length * 100).toFixed(0)}%)`)}, top-5 ranked`);
+  console.log(`  ${yellow('grep   ')}   ${grepFoundCount}/${applicableQueries.length} found ${dim(`(${(grepFoundCount / applicableQueries.length * 100).toFixed(0)}%)`)}, ${grepAvgCount.toFixed(0)} avg files`);
+  console.log(`  ${dim('ripgrep')}   ${rgFoundCount}/${applicableQueries.length} found ${dim(`(${(rgFoundCount / applicableQueries.length * 100).toFixed(0)}%)`)}, ${rgAvgCount.toFixed(0)} avg files`);
+  console.log(`  ${cyan('blink  ')}   P@1 ${bold(`${blinkP1Count}/${applicableQueries.length}`)} ${dim(`(${(blinkP1Count / applicableQueries.length * 100).toFixed(0)}%)`)}, P@3 ${bold(`${blinkP3Count}/${applicableQueries.length}`)} ${dim(`(${(blinkP3Count / applicableQueries.length * 100).toFixed(0)}%)`)}, top-5`);
   console.log();
   console.log(`  ${bold('speedup')}    blink vs grep ${ok(speedupVsGrep.toFixed(0) + '×')}   blink vs ripgrep ${ok(speedupVsRg.toFixed(0) + '×')}`);
   console.log();

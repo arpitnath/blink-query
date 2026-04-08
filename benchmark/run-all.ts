@@ -87,6 +87,22 @@ async function main(): Promise<void> {
   // Forward --verbose to spawned bench.ts subprocesses
   const verbose = process.argv.includes('--verbose');
 
+  // --corpus <name> filters to a single corpus. Matches either the full name
+  // ('mdn-content') or the short key ('mdn'). If unset, runs all corpora.
+  const corpusFlagIdx = process.argv.indexOf('--corpus');
+  const requestedCorpus = corpusFlagIdx >= 0 ? process.argv[corpusFlagIdx + 1] : null;
+  let activeCorpora = CORPORA;
+  if (requestedCorpus) {
+    activeCorpora = CORPORA.filter(
+      c => c.name === requestedCorpus || c.name.split('-')[0] === requestedCorpus,
+    );
+    if (activeCorpora.length === 0) {
+      console.error(red(`unknown corpus '${requestedCorpus}'`));
+      console.error(dim(`available: ${CORPORA.map(c => c.name.split('-')[0]).join(', ')}`));
+      process.exit(1);
+    }
+  }
+
   console.log();
   console.log(bold(cyan('╔══════════════════════════════════════════════════════════════════════╗')));
   console.log(bold(cyan('║                       blink-query benchmark                          ║')));
@@ -94,6 +110,9 @@ async function main(): Promise<void> {
   console.log();
   console.log(dim(`run at: ${startedAt.toISOString()}`));
   console.log(dim(`machine: ${process.platform} ${process.arch}, node ${process.version}`));
+  if (requestedCorpus) {
+    console.log(dim(`filter:  --corpus ${requestedCorpus} (${activeCorpora.length}/${CORPORA.length} corpora)`));
+  }
   console.log();
 
   // ── Step 1: ensure corpora are present ────────────────
@@ -111,7 +130,7 @@ async function main(): Promise<void> {
 
   const reports: Report[] = [];
 
-  for (const corpus of CORPORA) {
+  for (const corpus of activeCorpora) {
     const root = corpusContentRoot(corpus);
     if (!existsSync(root)) {
       console.error(red(`corpus root missing: ${root}`));
@@ -138,6 +157,36 @@ async function main(): Promise<void> {
   }
 
   // ── Step 3: cross-corpus summary ───────────────────────
+  // Skip when only one corpus was run — the per-corpus card already
+  // shows everything; cross-corpus tables would just be a single row.
+  if (reports.length < 2) {
+    console.log();
+    console.log(dim(`  ran 1 corpus — see per-corpus output above for results`));
+    console.log();
+    console.log(dim(`  unified results: benchmark/results.json`));
+    console.log();
+    const elapsedSec = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);
+    console.log(dim(`  total elapsed: ${elapsedSec}s`));
+    console.log();
+
+    // Still write a results.json (single-corpus shape, useful for tooling)
+    const single = {
+      runAt: startedAt.toISOString(),
+      machine: reports[0]?.machine,
+      corpora: reports.map(r => ({
+        label: r.label,
+        corpusKey: r.corpusKey,
+        files: r.corpus.mdFileCount,
+        bytes: r.corpus.mdTotalBytes,
+        ingestMs: r.blinkDb.ingestMs,
+        summary: r.summary,
+      })),
+    };
+    mkdirSync('benchmark/.tmp', { recursive: true });
+    writeFileSync('benchmark/results.json', JSON.stringify(single, null, 2));
+    return;
+  }
+
   console.log();
   console.log();
   console.log(bold(cyan('╔══════════════════════════════════════════════════════════════════════╗')));

@@ -15,6 +15,7 @@ blink-query is a knowledge resolution library for LLM agents. Markdown files sta
 ## Features
 
 - **5 typed record types** — `SUMMARY`, `META`, `SOURCE`, `ALIAS`, `COLLECTION` — each carries a consumption instruction for the agent (read the summary / parse JSON / fetch the source / follow the redirect / browse children)
+- **Namespaces** — slash-delimited paths group records by topic (e.g., `wiki/concepts`, `decisions/auth`, `people/arpit`); each record has a stable path at `namespace/slug-of-title`
 - **Title-weighted BM25 over FTS5** — title matches ranked 10× over body summary, with per-type rank offsets that promote canonical pages
 - **Hub-vs-leaf default classifier** — automatically promotes `index` / `README` / `Home` files in hub directories to `SUMMARY`, no per-corpus tuning
 - **Path resolution** — deterministic O(1) lookup by namespace/slug, with `NXDOMAIN` / `STALE` / `ALIAS_LOOP` statuses
@@ -166,7 +167,37 @@ BLINK_DB_PATH = "~/.blink/blink.db"
 
 **nvm users**: if your agent can't find `npx`, run `blink init --absolute-node` to write the absolute path to your node binary instead. Avoids the "agent doesn't source shell rc" issue.
 
-The MCP server exposes 11 tools: `blink_resolve`, `blink_save`, `blink_search`, `blink_list`, `blink_query`, `blink_get`, `blink_delete`, `blink_move`, `blink_zones`, `blink_create_zone`, `blink_ingest`.
+### Runtime capabilities
+
+Once connected, the agent can resolve, search, **save new records**, move or delete existing ones, **create new zones** with required-tag policies, and **ingest fresh markdown** — all via MCP tool calls at runtime. No restart, no re-deploy, no re-ingest. The knowledge base grows under the agent's own hands.
+
+The MCP server exposes 11 tools, grouped by what they do:
+
+**Read**
+
+| Tool | Does |
+|---|---|
+| `blink_resolve` | Deterministic O(1) path lookup with `NXDOMAIN` / `STALE` / `ALIAS_LOOP` statuses |
+| `blink_get` | Get a single record by exact path (no resolution) |
+| `blink_search` | Title-weighted BM25 search, returns top-K ranked records |
+| `blink_query` | Peggy DSL query: structured filters, sort, limit, offset |
+| `blink_list` | Browse a namespace, sort by recent / hits / title |
+
+**Write**
+
+| Tool | Does |
+|---|---|
+| `blink_save` | **Create or update a record** — the agent authors new knowledge at runtime |
+| `blink_move` | Move a record from one path to another |
+| `blink_delete` | Delete a record by path |
+| `blink_ingest` | Ingest a directory of markdown files into typed records |
+
+**Zones**
+
+| Tool | Does |
+|---|---|
+| `blink_zones` | List all registered zones with their metadata |
+| `blink_create_zone` | **Create a new zone** with description, default TTL, and required tags — the agent carves out namespaces on demand |
 
 Drop [`BLINK_WIKI.md`](BLINK_WIKI.md) into your project root (or paste it into your agent's system prompt) so the agent knows how to use the wiki pattern.
 
@@ -226,10 +257,27 @@ const summaries = blink.query(
   'wiki where type = "SUMMARY" order by hit_count desc limit 10',
 );
 
+// Save a new record (idempotent on path — upserts by namespace + slug-of-title)
+blink.save({
+  namespace: 'wiki/concepts',
+  title: 'OAuth Flow',
+  type: 'SUMMARY',
+  summary: 'OAuth 2.1 flow for first-party apps — PKCE, refresh tokens, session scoping.',
+  tags: ['auth'],
+});
+
+// Create a zone with a required-tag policy
+blink.createZone({
+  namespace: 'decisions',
+  description: 'Architecture decision records',
+  defaultTtl: 31536000,    // 1 year, inherited by saves into this zone
+  requiredTags: ['adr'],   // save() throws if missing
+});
+
 blink.close();
 ```
 
-All CRUD operations are synchronous (`resolve`, `get`, `save`, `delete`, `move`, `search`, `list`, `query`). Only ingestion is async.
+All CRUD operations are synchronous (`resolve`, `get`, `save`, `delete`, `move`, `search`, `list`, `query`, `createZone`, `zones`). Only ingestion is async.
 
 ---
 

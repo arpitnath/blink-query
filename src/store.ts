@@ -558,6 +558,39 @@ export function evictStale(db: Database): number {
   return staleRecords.length;
 }
 
+export function findBacklinks(
+  db: Database,
+  targetPath: string,
+  targetTitle: string | null,
+): { linked: BlinkRecord[]; mentioned: BlinkRecord[] } {
+  // Primary: deterministic ALIAS records pointing at targetPath
+  const linkedRows = db.prepare(
+    `SELECT * FROM records WHERE type = 'ALIAS' AND json_extract(content, '$.target') = ?`,
+  ).all(targetPath) as RawRecord[];
+  const linked = linkedRows.map(deserializeRecord);
+
+  // Secondary: FTS5 soft backlinks — records mentioning the target title in summary
+  let mentioned: BlinkRecord[] = [];
+  if (targetTitle) {
+    const matchExpr = `"${targetTitle.replace(/"/g, '""')}"`;
+    const mentionedRows = db.prepare(`
+      SELECT r.* FROM records_fts fts
+      JOIN records r ON r.path = fts.record_path
+      WHERE records_fts MATCH ?
+        AND r.path != ?
+        AND r.type != 'ALIAS'
+    `).all(matchExpr, targetPath) as RawRecord[];
+
+    // Exclude records already in linked (by path)
+    const linkedPaths = new Set(linked.map(r => r.path));
+    mentioned = mentionedRows
+      .map(deserializeRecord)
+      .filter(r => !linkedPaths.has(r.path));
+  }
+
+  return { linked, mentioned };
+}
+
 export function findSuggestions(db: Database, pathPrefix: string, parentNs: string): Array<{ path: string; title: string; type: string }> {
   return db.prepare(
     'SELECT path, title, type FROM records WHERE path LIKE ? OR namespace = ? ORDER BY hit_count DESC LIMIT 5'

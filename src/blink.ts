@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3';
-import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, createZone, getZone, slug, evictStale } from './store.js';
+import { initDB, save, saveMany, getByPath, list, deleteRecord, move, searchByKeywords, listZones, createZone, getZone, slug, evictStale, findBacklinks } from './store.js';
 import { resolve } from './resolver.js';
 import { executeQuery } from './query-executor.js';
 import { processDocuments, loadDirectory, extractiveSummarize, POSTGRES_DERIVERS, GITHUB_DERIVERS, extractWikiLinks } from './ingest.js';
 import { loadFromPostgres, loadFromPostgresProgressive, loadFromUrls, loadFromGit, loadFromGitHubIssues, introspectPostgresTable, pickTextColumn } from './adapters.js';
-import type { BlinkRecord, SaveInput, Zone, ZoneConfig, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig, GitHubLoadConfig } from './types.js';
+import type { BlinkRecord, BacklinksResult, SaveInput, Zone, ZoneConfig, ResolveResponse, IngestDocument, IngestOptions, IngestResult, PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, WebLoadConfig, GitLoadConfig, GitHubLoadConfig } from './types.js';
 
 export interface BlinkOptions {
   dbPath?: string;
@@ -85,6 +85,12 @@ export class Blink {
   /** Get a record by exact path (no resolution) */
   get(path: string): BlinkRecord | null {
     return getByPath(this.db, path);
+  }
+
+  /** Find all records that link to or mention the given path */
+  backlinks(path: string): BacklinksResult {
+    const target = getByPath(this.db, path);
+    return findBacklinks(this.db, path, target?.title ?? null);
   }
 
   /** Ingest documents (from LlamaIndex or any loader) into Blink records */
@@ -221,7 +227,7 @@ export class Blink {
 
 // Re-export types for consumers
 export type {
-  BlinkRecord, SaveInput, Zone, ZoneConfig, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
+  BlinkRecord, BacklinksResult, SaveInput, Zone, ZoneConfig, ResolveResponse, RecordType, Source, QueryAST, QueryCondition,
   IngestDocument, IngestOptions, IngestResult, SummarizeCallback, ClassifyCallback,
   DeriveNamespaceCallback, DeriveTitleCallback, DeriveTagsCallback, BuildSourcesCallback,
   PostgresLoadConfig, PostgresProgressiveConfig, PostgresIntrospection, PostgresColumnInfo,

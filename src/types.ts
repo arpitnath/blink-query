@@ -86,6 +86,14 @@ export interface QueryCondition {
   value: string | number | (string | number)[];
 }
 
+// Backlinks result
+export interface BacklinksResult {
+  /** ALIAS records whose content.target points to the queried path */
+  linked: BlinkRecord[];
+  /** Non-ALIAS records that mention the target's title in their summary (unlinked mentions) */
+  mentioned: BlinkRecord[];
+}
+
 // Resolution response
 export interface ResolveResponse {
   status: 'OK' | 'NXDOMAIN' | 'STALE' | 'ALIAS_LOOP';
